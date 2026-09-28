@@ -1,4 +1,4 @@
-# Delivery Copy
+﻿# Delivery Copy
 
 Delivery Copy collects files for software delivery. It is a portable Windows PowerShell 5.1 application with a WPF interface: no EXE, .NET SDK, installer, or build step is required.
 
