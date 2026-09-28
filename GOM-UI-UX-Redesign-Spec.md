@@ -351,3 +351,51 @@ Bảng mapping bắt buộc:
 | Thư mục nhận | Destination folder |
 | Đang quét file | Scanning files... |
 | Đang bàn giao | Delivering... |
+
+---
+
+## 11. Feedback WinForms cu va cach xu ly tren WPF hien tai
+
+Muc nay ghi nhan 7 loi tu ban WinForms `DeliveryCopy.ps1` cu va quy dinh fix tren ban WPF (`UI.xaml` + `App.ps1`).
+
+### 11.1 Noi dung bi che khi scale/DPI cao
+
+- Loi cu: control dung `SetBounds` tuyet doi, `$form` va 3 `TabPage` khong co `AutoScroll`. O `MinimumSize (920,600)` chi con khoang 545px cho noi dung; scale 125%/150% la nut `Add folder`, `Choose files`, `Sync and compare` bi cat va khong keo xuong duoc.
+- Fix WPF: boc `CollectView` va `DeliverView` trong `ScrollViewer` (`VerticalScrollBarVisibility=Auto`, `HorizontalScrollBarVisibility=Disabled`). `ReviewView` giu DataGrid tu cuon noi bo de bang file chiem da so chieu cao. Layout dung Grid/StackPanel co gian, khong dung toa do cung.
+- Acceptance: mo cua so 960x640 o 100% va 125%, moi nut van thao tac duoc bang cuon hoac khong bi cat.
+
+### 11.2 Layout cung khong theo khi resize
+
+- Loi cu: khong dung `TableLayoutPanel`/`FlowLayoutPanel`, thieu `Anchor` nen resize ngang de lai khoang trang hoac cat mep phai.
+- Fix WPF: dung Grid `*`, `Auto`, `MaxWidth=880/920`, DataGrid cot `*`. Khong them toa do cung moi.
+- Acceptance: keo rong/hep cua so, khong co control tran mep phai, bang file gian theo chieu ngang.
+
+### 11.3 Tab order lon xon do reparent
+
+- Loi cu: tao group box cu roi an (`Visible=false`), chuyen control con sang card moi bang `Controls.Remove/Add` nen TabIndex bi day xuong cuoi.
+- Fix WPF: khong reparent runtime; gan `TabIndex` tinh theo luong: chon file/thu muc (10-11), exclude/paste (20-22), Git (30-36), search/filter (40-41), destination/duplicate/hash/SQL/start (50-56). Dialog SQL co TabIndex 1-3.
+- Acceptance: nhan Tab di theo dung thu tu nhin thay tu tren xuong duoi.
+
+### 11.4 Text UI lan lon Viet khong dau + Anh
+
+- Loi cu: `Dan danh sach file de move`, `PASTE FILE LIST`, `Click the field below...`, `Tong quan danh sach` trong cung mot tab.
+- Fix WPF: toan bo UI English ASCII only theo bang mapping muc 10. Da sua `Xem file failed` thanh `Review failed files`. Tai lieu spec duoc phep dung tieng Viet, code thi khong.
+- Acceptance: quet `UI.xaml` + `App.ps1` khong con tieng Viet co dau/khong dau trong label, button, tooltip, status.
+
+### 11.5 Dead code / control thua Visible=false
+
+- Loi cu: `$gSource`, `$gGit`, `$gManual`, `$gDest`, `$gOptions`, `$dashboard`, ham `Paste-List` khong con goi nhung van de trong file 40KB.
+- Fix WPF: khong mang control an sang ban moi; chi giu control co trong `$names` va co `FindName` that. Da quet: khong con cac ten WinForms cu trong `App.ps1`.
+- Acceptance: khong co control chi de `Visibility=Collapsed` vinh vien ma khong co logic hien lai; khong co ham khong duoc goi.
+
+### 11.6 Dialog SQL thieu Cancel/Close ro rang
+
+- Loi cu: chi co `Save for this session`, muon thoat phai bam X.
+- Fix WPF: dialog `Show-SqlDialog` co nut `Cancel` (`IsCancel=True`) + nut `Save for this session` (`IsDefault=True`), them label `DB user`, `Password (memory only)`, `TNS name`, dong loi `DialogError`, validate trong truoc khi dong. Nhan Esc hoac Cancel khong doi `$script:db`.
+- Acceptance: mo dialog, bam Cancel/Esc thi cau hinh cu giu nguyen; bo trong DB user/TNS thi bao loi ngay trong dialog.
+
+### 11.7 runscript mac dinh bat va bao loi muon
+
+- Loi cu: `runscript.checked=true` mac dinh; thieu cau hinh thi copy xong moi `throw`, mat thoi gian cho.
+- Fix WPF: `CreateRunScript` mac dinh tat, `SqlOptions` chi hien khi co file `.sql` dang chon. `Start-Delivery` validate truoc khi tao job: neu thieu DB user/TNS thi hien `SqlConfigError` canh nut `Configure SQL*Plus` va dung lai, khong copy file.
+- Acceptance: bat `Create runscript.sql` khi chua cau hinh SQL thi bi chan ngay voi thong bao thieu truong nao; khong co file nao bi copy truoc khi bao loi.
