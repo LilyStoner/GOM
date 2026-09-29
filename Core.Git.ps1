@@ -4,7 +4,14 @@ function Invoke-DeliveryGit {
     param([Parameter(Mandatory)][string]$Repository,[Parameter(Mandatory)][string[]]$Arguments)
     $result = @(& git -c ("safe.directory=$Repository") -C $Repository @Arguments 2>&1)
     if ($LASTEXITCODE -ne 0) { throw "Git $($Arguments -join ' ') failed: $($result -join [Environment]::NewLine)" }
-    return $result
+    # Git can emit harmless autocrlf warnings to stderr on a successful diff.
+    # Do not let those lines become branch names or changed-file paths.
+    return @($result | Where-Object {
+        # A successful Git command may write autocrlf diagnostics to stderr.
+        # They are informational only, never branch names or file paths.
+        $line = $_.ToString().Trim()
+        $line -notmatch '(?i)^warning:' -and $line -notmatch '(?i)LF will be replaced by CRLF'
+    })
 }
 
 function Get-DeliveryGitRoot {
@@ -53,20 +60,26 @@ function ConvertFrom-DeliveryGitNameStatus {
     return $result
 }
 
+function Merge-DeliveryGitChanges {
+    param([Parameter(Mandatory)][hashtable]$Target,[Parameter(Mandatory)][hashtable]$Incoming)
+    foreach ($path in $Incoming.Keys) { $Target[$path] = $Incoming[$path] }
+}
+
 function Get-DeliveryGitChanges {
     param(
         [Parameter(Mandatory)][string]$Repository,
         [Parameter(Mandatory)][string]$BaseBranch,
         [Parameter(Mandatory)][string]$CompareBranch,
-        [bool]$IncludeWorkspace = $true
+        [bool]$IncludeWorkspace = $false,
+        [bool]$SyncRemote = $true
     )
-    Sync-DeliveryGitRemote $Repository
+    if ($SyncRemote) { Sync-DeliveryGitRemote $Repository }
     $base = Resolve-DeliveryGitRef $Repository $BaseBranch
     $compare = Resolve-DeliveryGitRef $Repository $CompareBranch
     $changes = ConvertFrom-DeliveryGitNameStatus @(Invoke-DeliveryGit $Repository @('diff', '--name-status', '-M', '--diff-filter=ACMR', ($base + '...' + $compare))) $Repository
     if ($IncludeWorkspace) {
-        foreach ($line in @(Invoke-DeliveryGit $Repository @('diff', '--name-status', '-M', 'HEAD'))) { $changes += ConvertFrom-DeliveryGitNameStatus @($line) $Repository }
-        foreach ($line in @(Invoke-DeliveryGit $Repository @('diff', '--name-status', '-M', '--cached'))) { $changes += ConvertFrom-DeliveryGitNameStatus @($line) $Repository }
+        foreach ($line in @(Invoke-DeliveryGit $Repository @('diff', '--name-status', '-M', 'HEAD'))) { Merge-DeliveryGitChanges $changes (ConvertFrom-DeliveryGitNameStatus @($line) $Repository) }
+        foreach ($line in @(Invoke-DeliveryGit $Repository @('diff', '--name-status', '-M', '--cached'))) { Merge-DeliveryGitChanges $changes (ConvertFrom-DeliveryGitNameStatus @($line) $Repository) }
         foreach ($relative in @(Invoke-DeliveryGit $Repository @('ls-files', '--others', '--exclude-standard'))) {
             if ($relative) { $changes[[IO.Path]::GetFullPath((Join-Path -Path $Repository -ChildPath $relative.Trim()))] = 'A' }
         }
