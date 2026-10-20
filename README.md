@@ -13,6 +13,7 @@ Công cụ portable trên Windows để gom file bàn giao từ file/thư mục 
   - Một chạm tự động sắp xếp toàn bộ script SQL theo thứ tự phụ thuộc chuẩn của FlexDB: `ChangeScripts` → `Views` → `Triggers` → `Procedures` → `Functions` → `Packages` → `Parameters` (ALLCODE, APPRVRQD, DEFERROR, SYSVAR, ...).
 - **Rà soát danh sách trực quan**: include/exclude, tìm kiếm, lọc theo loại, tính tổng dung lượng và số lượng file SQL.
 - **Chế độ sáng/tối**: đổi giao diện bằng nút **Dark mode** trên thanh đầu trang; lựa chọn được lưu tại `%LOCALAPPDATA%\GOM\theme.json` và tự áp dụng ở lần mở tiếp theo.
+- **Đa ngôn ngữ**: giao diện mặc định bằng **English**, có thể chuyển sang **Arabic**; lựa chọn được lưu tại `%LOCALAPPDATA%\GOM\language.json`. Khi chọn tiếng Ả Rập, giao diện chuyển sang bố cục phải-sang-trái (RTL).
 - **Copy an toàn**: Giữ nguyên cấu trúc thư mục, xử lý file trùng (Skip/Overwrite/Rename), đối soát SHA-256 sau khi copy.
 - Không xuất file `delivery_manifest`.
 
@@ -75,8 +76,10 @@ Công cụ portable trên Windows để gom file bàn giao từ file/thư mục 
 
 | File | Vai trò |
 | --- | --- |
-| `App.ps1` | Logic giao diện, chuyển đổi Profile, xử lý luồng sự kiện |
+| `App.ps1` | Logic giao diện, chuyển đổi Profile/ngôn ngữ, lưu tùy chọn giao diện và xử lý luồng sự kiện |
 | `UI.xaml` | Layout giao diện, bộ chọn Profile, điều khiển Git và Review |
+| `Localization.json` | Bản dịch giao diện tiếng Ả Rập, với tiếng Anh làm ngôn ngữ mặc định |
+| `Localization.ps1` | Nạp bản dịch và áp dụng hướng RTL/LTR theo ngôn ngữ |
 | `Core.Git.ps1` | Git fetch, auto checkout & pull branch, diff và trích xuất file |
 | `Core.FileOps.ps1` | Ánh xạ đường dẫn theo Profile (BVSC / Other), scan file, copy và hash |
 | `Core.SqlPlus.ps1` | Sinh bộ script thực thi cho BVSC (runUpdate.bat, setVariable.bat, install.sql) và Other (runscript.txt với đường dẫn repo local tuyệt đối) |

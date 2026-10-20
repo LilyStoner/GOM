@@ -15,7 +15,7 @@
  <Grid Margin="24">
   <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="12"/><RowDefinition Height="44"/><RowDefinition Height="16"/><RowDefinition Height="*"/></Grid.RowDefinitions>
   <Grid>
-   <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="12"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="12"/><ColumnDefinition Width="240"/></Grid.ColumnDefinitions>
+   <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="200"/></Grid.ColumnDefinitions>
    <StackPanel>
     <TextBlock Text="Delivery Copy" FontSize="22" FontWeight="SemiBold" Foreground="{DynamicResource ThemeColor_17263C}"/>
     <TextBlock Text="Create a delivery package from files or Git changes" Margin="0,3,0,0" Foreground="{DynamicResource ThemeColor_5D6B7E}"/>
@@ -29,8 +29,12 @@
      </ComboBox>
     </StackPanel>
    </Border>
-   <Button x:Name="DarkModeButton" Grid.Column="3" Content="Dark mode" Style="{StaticResource Secondary}" Padding="12,6" MinHeight="32" VerticalAlignment="Center" ToolTip="Switch between light and dark appearance"/>
-   <Border Grid.Column="5" Background="{DynamicResource ThemeColor_EAF2FF}" CornerRadius="14" Padding="12,6" HorizontalAlignment="Right" VerticalAlignment="Center"><TextBlock x:Name="InlineStatus" Text="Ready" Foreground="{DynamicResource ThemeColor_1463D6}" TextTrimming="CharacterEllipsis"/></Border>
+   <ComboBox x:Name="LanguageCombo" Grid.Column="3" Width="112" Height="32" SelectedIndex="0" VerticalAlignment="Center" ToolTip="Select language">
+    <ComboBoxItem Content="English"/>
+    <ComboBoxItem Content="Arabic"/>
+   </ComboBox>
+   <Button x:Name="DarkModeButton" Grid.Column="5" Content="Dark mode" Style="{StaticResource Secondary}" Padding="12,6" MinHeight="32" VerticalAlignment="Center" ToolTip="Switch between light and dark appearance"/>
+   <Border Grid.Column="7" Background="{DynamicResource ThemeColor_EAF2FF}" CornerRadius="14" Padding="12,6" HorizontalAlignment="Right" VerticalAlignment="Center"><TextBlock x:Name="InlineStatus" Text="Ready" Foreground="{DynamicResource ThemeColor_1463D6}" TextTrimming="CharacterEllipsis"/></Border>
   </Grid>
   <Border Grid.Row="2" Background="{DynamicResource ThemeColor_FFFFFF}" BorderBrush="{DynamicResource ThemeColor_D7DFE9}" BorderThickness="1" CornerRadius="8"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Button x:Name="Step1Button" Grid.Column="0" Style="{StaticResource Step}" Content="1  Select files"/><Button x:Name="Step2Button" Grid.Column="1" Style="{StaticResource Step}" Content="2  Review (0)" IsEnabled="False" ToolTipService.ShowOnDisabled="True"/><Button x:Name="Step3Button" Grid.Column="2" Style="{StaticResource Step}" Content="3  Deliver" IsEnabled="False" ToolTipService.ShowOnDisabled="True"/></Grid></Border>
   <Grid Grid.Row="4">
