@@ -5,11 +5,23 @@ Add-Type -AssemblyName PresentationFramework,PresentationCore,WindowsBase,System
 $script:appRoot=Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $script:appRoot 'Core.Git.ps1');. (Join-Path $script:appRoot 'Core.FileOps.ps1');. (Join-Path $script:appRoot 'Core.SqlPlus.ps1')
 
+$script:themeSettingsPath=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'GOM\theme.json'
+function Get-SavedTheme {
+    if(-not (Test-Path -LiteralPath $script:themeSettingsPath -PathType Leaf)){return 'Light'}
+    try {
+        $settings=Get-Content -LiteralPath $script:themeSettingsPath -Raw -Encoding UTF8|ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        throw "Could not read theme settings at '$script:themeSettingsPath': $($_.Exception.Message)"
+    }
+    if($settings.Theme -notin @('Light','Dark')){throw "Theme settings at '$script:themeSettingsPath' must contain Theme set to 'Light' or 'Dark'."}
+    return [string]$settings.Theme
+}
+$script:theme=Get-SavedTheme
 [xml]$xaml=Get-Content -LiteralPath (Join-Path $script:appRoot 'UI.xaml') -Raw -Encoding UTF8
 $window=[Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
 
 $names=@(
-    'InlineStatus','ProjectProfileCombo','Step1Button','Step2Button','Step3Button',
+    'InlineStatus','DarkModeButton','ProjectProfileCombo','Step1Button','Step2Button','Step3Button',
     'CollectScroll','CollectView','ReviewView','DeliverScroll','DeliverView',
     'CollectProgress','CollectHint','AdvancedCollect',
     'ExcludeRules','PasteInput','AddPathsButton','PasteResult','RepoPath','ChooseRepoButton',
@@ -25,6 +37,59 @@ $names=@(
     'ResultSummary','OpenDestinationButton','OpenManifestButton','ReviewErrorsButton'
 )
 foreach($name in $names){Set-Variable -Name $name -Value $window.FindName($name) -Scope Script}
+
+function Set-Theme([string]$Theme,[Windows.Window]$TargetWindow=$window) {
+    $light=@{
+        '003399'='#003399';'0078D7'='#0078D7';'0645C0'='#0645C0';'0F54B6'='#0F54B6';'1463D6'='#1463D6'
+        '16794A'='#16794A';'17263C'='#17263C';'28384D'='#28384D';'536174'='#536174';'5D6B7E'='#5D6B7E'
+        'A96500'='#A96500';'A9C7F5'='#A9C7F5';'B42318'='#B42318';'B8C0CC'='#B8C0CC';'CFE8FA'='#CFE8FA'
+        'D7DFE9'='#D7DFE9';'D9DEE7'='#D9DEE7';'E5E9F0'='#E5E9F0';'EAF2FF'='#EAF2FF';'EEF1F5'='#EEF1F5'
+        'EEF3FA'='#EEF3FA';'F3B5B0'='#F3B5B0';'F5F7FA'='#F5F7FA';'F6F8FB'='#F6F8FB';'FFF7F6'='#FFF7F6'
+        'FFFFFF'='#FFFFFF'
+    }
+    $dark=@{
+        '003399'='#D4E6FF';'0078D7'='#64B5F6';'0645C0'='#7AB6FF';'0F54B6'='#4C91EE';'1463D6'='#69A7FF'
+        '16794A'='#6FD6A0';'17263C'='#E8EDF5';'28384D'='#D5DDE8';'536174'='#AFBAC9';'5D6B7E'='#A0ACBC'
+        'A96500'='#F1B75B';'A9C7F5'='#35659A';'B42318'='#FF8E88';'B8C0CC'='#707B8A';'CFE8FA'='#30465C'
+        'D7DFE9'='#394454';'D9DEE7'='#394454';'E5E9F0'='#303946';'EAF2FF'='#26364A';'EEF1F5'='#303946'
+        'EEF3FA'='#303B4A';'F3B5B0'='#75403F';'F5F7FA'='#171A21';'F6F8FB'='#252C37';'FFF7F6'='#382727'
+        'FFFFFF'='#222833'
+    }
+    $palette=if($Theme -eq 'Dark'){$dark}else{$light}
+    foreach($key in $palette.Keys){
+        $TargetWindow.Resources["ThemeColor_$key"]=[Windows.Media.BrushConverter]::new().ConvertFromString($palette[$key])
+    }
+    if($TargetWindow -eq $window){
+        $DarkModeButton.Content=if($Theme -eq 'Dark'){'Light mode'}else{'Dark mode'}
+        $DarkModeButton.ToolTip=if($Theme -eq 'Dark'){'Switch to light appearance'}else{'Switch to dark appearance'}
+        $script:theme=$Theme
+        Set-NativeTitleBarTheme
+    }
+}
+
+function Set-NativeTitleBarTheme {
+    if(-not ('GomDwmThemeApi' -as [type])){
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class GomDwmThemeApi
+{
+    [DllImport("dwmapi.dll")]
+    public static extern int SetWindowAttribute(IntPtr window, int attribute, ref int value, int valueSize);
+}
+'@ -ErrorAction Stop
+    }
+    $handle=[Windows.Interop.WindowInteropHelper]::new($window).Handle
+    if($handle -eq [IntPtr]::Zero){return}
+    $darkMode=[int]($script:theme -eq 'Dark')
+    try {
+        $result=[GomDwmThemeApi]::SetWindowAttribute($handle,20,[ref]$darkMode,4)
+        if($result -lt 0){[void][GomDwmThemeApi]::SetWindowAttribute($handle,19,[ref]$darkMode,4)}
+    } catch [DllNotFoundException] {
+    } catch [EntryPointNotFoundException] {
+    }
+}
 
 $script:currentProfile='BSC'
 $script:items=New-Object 'System.Collections.ObjectModel.ObservableCollection[object]'
@@ -49,6 +114,15 @@ function Format-FileCount([int]$Count) {
 }
 
 function Set-Status([string]$Text,[string]$Color='#1463D6'){
+    if($script:theme -eq 'Dark'){
+        $Color=switch($Color.ToUpperInvariant()){
+            '#1463D6'{'#69A7FF'}
+            '#16794A'{'#6FD6A0'}
+            '#B42318'{'#FF8E88'}
+            '#A96500'{'#F1B75B'}
+            default{$Color}
+        }
+    }
     $InlineStatus.Text=$Text
     $InlineStatus.Foreground=[Windows.Media.BrushConverter]::new().ConvertFromString($Color)
 }
@@ -72,14 +146,15 @@ function Convert-UiStatus([string]$Status){
 }
 
 function Set-Step([int]$Step){
+    $script:currentStep=$Step
     $CollectScroll.Visibility=if($Step -eq 1){'Visible'}else{'Collapsed'}
     $CollectView.Visibility=if($Step -eq 1){'Visible'}else{'Collapsed'}
     $ReviewView.Visibility=if($Step -eq 2){'Visible'}else{'Collapsed'}
     $DeliverScroll.Visibility=if($Step -eq 3){'Visible'}else{'Collapsed'}
     $DeliverView.Visibility=if($Step -eq 3){'Visible'}else{'Collapsed'}
     foreach($pair in @(@($Step1Button,1),@($Step2Button,2),@($Step3Button,3))){
-        $pair[0].Background=if($pair[1] -eq $Step){[Windows.Media.Brushes]::AliceBlue}else{[Windows.Media.Brushes]::Transparent}
-        $pair[0].Foreground=if($pair[1] -eq $Step){[Windows.Media.BrushConverter]::new().ConvertFromString('#1463D6')}else{[Windows.Media.BrushConverter]::new().ConvertFromString('#28384D')}
+        $pair[0].Background=if($pair[1] -eq $Step){$window.Resources['ThemeColor_EAF2FF']}else{[Windows.Media.Brushes]::Transparent}
+        $pair[0].Foreground=if($pair[1] -eq $Step){$window.Resources['ThemeColor_1463D6']}else{$window.Resources['ThemeColor_28384D']}
     }
 }
 
@@ -101,8 +176,8 @@ function Set-DeliveryProfile([string]$Profile, [bool]$UpdateDbDefaults=$true) {
             $script:db.Password = 'HOST'
             $script:db.Tns = 'FLEX189'
         }
-        $ProfileDeliveryHint.Text = "BSC Mode: Preserves the repository structure (1.BDSHOST, 2.HOST, 3.Service...). Creates runscript.txt only; no runscript.sql or delivery manifest."
-        $SqlScriptDescription.Text = "BSC: Generates runscript.txt at the destination root. Each @ command uses the absolute path of the source SQL file in the local repository."
+        $ProfileDeliveryHint.Text = "Other Mode: Preserves the repository structure (1.BDSHOST, 2.HOST, 3.Service...). Creates runscript.txt only; no runscript.sql or delivery manifest."
+        $SqlScriptDescription.Text = "Other: Generates runscript.txt at the destination root. Each @ command uses the absolute path of the source SQL file in the local repository."
     }
     $SqlConfigSummary.Text = "DB: $($script:db.User)@$($script:db.Tns)"
     $OpenManifestButton.Visibility = 'Collapsed'
@@ -117,10 +192,10 @@ function Set-DeliveryProfile([string]$Profile, [bool]$UpdateDbDefaults=$true) {
 }
 
 function Show-StartupProfileDialog {
-    [xml]$sx=@'
+    $sx=@'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="Select Delivery Project Mode" Width="540" Height="340" ResizeMode="NoResize" WindowStartupLocation="CenterScreen"
-    Background="#F5F7FA" FontFamily="Segoe UI Variable, Segoe UI">
+    Background="#F5F7FA" Foreground="#28384D" FontFamily="Segoe UI Variable, Segoe UI">
     <Window.Resources>
         <Style TargetType="{x:Type Control}"><Setter Property="FocusVisualStyle" Value="{x:Null}"/></Style>
         <Style x:Key="ProfileCard" TargetType="Button">
@@ -157,7 +232,7 @@ function Show-StartupProfileDialog {
             </Button>
             <Button x:Name="OtherOption" Style="{StaticResource ProfileCard}" Grid.Row="2">
                 <StackPanel>
-                    <TextBlock Text="BSC" FontSize="15" FontWeight="SemiBold" Foreground="#17263C"/>
+                    <TextBlock Text="Other" FontSize="15" FontWeight="SemiBold" Foreground="#17263C"/>
                     <TextBlock Text="Preserves the repository structure and generates runscript.txt with absolute local-repository SQL paths. Does not create runscript.sql or a delivery manifest." Margin="0,3,0,0" Foreground="#5D6B7E" TextWrapping="Wrap"/>
                 </StackPanel>
             </Button>
@@ -166,7 +241,11 @@ function Show-StartupProfileDialog {
     </Grid>
 </Window>
 '@
+    $sx=[regex]::Replace($sx,'#([0-9A-Fa-f]{6})','{DynamicResource ThemeColor_$1}')
+    $sx=$sx.Replace('Value="White"','Value="{DynamicResource ThemeColor_FFFFFF}"')
+    [xml]$sx=$sx
     $dlg=[Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $sx))
+    Set-Theme $script:theme $dlg
     if ($window.IsVisible) { $dlg.Owner = $window }
     $bvscBtn=$dlg.FindName('BvscOption')
     $otherBtn=$dlg.FindName('OtherOption')
@@ -218,13 +297,13 @@ function Refresh-Grid {
 
 function Update-DestinationState {
     $root=$DestinationPath.Text.Trim();$selected=@(Get-SelectedItems)
-    if(-not $root){$DestinationInfo.Text='Choose a destination folder.';$DestinationInfo.Foreground=[Windows.Media.BrushConverter]::new().ConvertFromString('#5D6B7E');$ConflictInfo.Text='';return}
+    if(-not $root){$DestinationInfo.Text='Choose a destination folder.';$DestinationInfo.Foreground=$window.Resources['ThemeColor_5D6B7E'];$ConflictInfo.Text='';return}
     $branchFolder=ConvertTo-DeliveryBranchFolderName $CompareBranch.Text
     $dest=if($branchFolder){Join-Path $root $branchFolder}else{$root}
     $branchMessage=if($branchFolder){" Delivery will be placed in '$branchFolder'."}else{''}
-    if(-not (Test-Path -LiteralPath $root -PathType Container)){$DestinationInfo.Text="Destination root does not exist. The delivery folder will be created after confirmation.$branchMessage";$DestinationInfo.Foreground=[Windows.Media.BrushConverter]::new().ConvertFromString('#A96500');$ConflictInfo.Text='';return}
-    if(-not (Test-Path -LiteralPath $dest -PathType Container)){$DestinationInfo.Text="Delivery folder: $dest (will be created).";$DestinationInfo.Foreground=[Windows.Media.BrushConverter]::new().ConvertFromString('#5D6B7E');$ConflictInfo.Text='';return}
-    $DestinationInfo.Text="Delivery folder: $dest";$DestinationInfo.Foreground=[Windows.Media.BrushConverter]::new().ConvertFromString('#5D6B7E')
+    if(-not (Test-Path -LiteralPath $root -PathType Container)){$DestinationInfo.Text="Destination root does not exist. The delivery folder will be created after confirmation.$branchMessage";$DestinationInfo.Foreground=$window.Resources['ThemeColor_A96500'];$ConflictInfo.Text='';return}
+    if(-not (Test-Path -LiteralPath $dest -PathType Container)){$DestinationInfo.Text="Delivery folder: $dest (will be created).";$DestinationInfo.Foreground=$window.Resources['ThemeColor_5D6B7E'];$ConflictInfo.Text='';return}
+    $DestinationInfo.Text="Delivery folder: $dest";$DestinationInfo.Foreground=$window.Resources['ThemeColor_5D6B7E']
     $conflicts=@($selected|Where-Object {Test-Path -LiteralPath (Join-Path $dest $_.Relative)}).Count
     $ConflictInfo.Text=if($conflicts){"$conflicts of $($selected.Count) selected files already exist in this folder."}else{'No selected files currently exist in this folder.'}
 }
@@ -320,10 +399,14 @@ function Add-PastedPaths {
 }
 
 function Show-SqlDialog {
-    [xml]$dx=@'
+    $dx=@'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Title="Configure DB Credentials" Width="500" Height="360" ResizeMode="NoResize" WindowStartupLocation="CenterOwner" FontFamily="Segoe UI">
-    <Window.Resources><Style TargetType="{x:Type Control}"><Setter Property="FocusVisualStyle" Value="{x:Null}"/></Style></Window.Resources>
+    Title="Configure DB Credentials" Width="500" Height="360" ResizeMode="NoResize" WindowStartupLocation="CenterOwner" FontFamily="Segoe UI"
+    Background="#F5F7FA" Foreground="#28384D">
+    <Window.Resources>
+        <Style TargetType="{x:Type Control}"><Setter Property="FocusVisualStyle" Value="{x:Null}"/><Setter Property="Foreground" Value="#28384D"/></Style>
+        <Style TargetType="TextBox"><Setter Property="Background" Value="#FFFFFF"/><Setter Property="BorderBrush" Value="#D7DFE9"/><Setter Property="Foreground" Value="#28384D"/></Style>
+    </Window.Resources>
     <Grid Margin="24">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="12"/><RowDefinition Height="Auto"/><RowDefinition Height="12"/><RowDefinition Height="Auto"/><RowDefinition Height="12"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <TextBlock Text="Configure DB Credentials" FontSize="18" FontWeight="SemiBold"/>
@@ -339,7 +422,10 @@ function Show-SqlDialog {
     </Grid>
 </Window>
 '@
+    $dx=[regex]::Replace($dx,'#([0-9A-Fa-f]{6})','{DynamicResource ThemeColor_$1}')
+    [xml]$dx=$dx
     $d=[Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $dx))
+    Set-Theme $script:theme $d
     if ($window.IsVisible) { $d.Owner=$window }
     $u=$d.FindName('User');$p=$d.FindName('Password');$t=$d.FindName('Tns');$err=$d.FindName('DialogError')
     $u.Text=$script:db.User;$p.Text=$script:db.Password;$t.Text=$script:db.Tns
@@ -583,7 +669,21 @@ $CancelDeliveryButton.Add_Click({
 $OpenDestinationButton.Add_Click({$path=if($script:deliveryPath){$script:deliveryPath}else{$DestinationPath.Text};if(Test-Path $path){Start-Process explorer.exe -ArgumentList ('"'+$path+'"')}})
 $OpenManifestButton.Add_Click({if(Test-Path $script:manifestPath){Start-Process $script:manifestPath}})
 $ReviewErrorsButton.Add_Click({$FilterBox.SelectedIndex=4;Set-Step 2})
+$window.Add_SourceInitialized({Set-NativeTitleBarTheme})
+$DarkModeButton.Add_Click({
+    $nextTheme=if($script:theme -eq 'Dark'){'Light'}else{'Dark'}
+    try {
+        $directory=Split-Path -Parent $script:themeSettingsPath
+        New-Item -ItemType Directory -Path $directory -Force -ErrorAction Stop|Out-Null
+        @{Theme=$nextTheme}|ConvertTo-Json|Set-Content -LiteralPath $script:themeSettingsPath -Encoding UTF8 -ErrorAction Stop
+        Set-Theme $nextTheme
+        Set-Step $script:currentStep
+    } catch {
+        [void][Windows.MessageBox]::Show("Could not save the appearance preference: $($_.Exception.Message)",'Appearance setting',[Windows.MessageBoxButton]::OK,[Windows.MessageBoxImage]::Error)
+    }
+})
 
+Set-Theme $script:theme
 Set-DeliveryProfile 'BSC'
 Set-Step 1
 if(-not $NoShow){
