@@ -1,0 +1,20 @@
+2.1	Cập nhật DB 	
+	1. Trong file bàn giao ở FLEX\2.HOST\upgrade\cmd, chạy runUpdate.bat để cập nhật các script SQL lên Database Flex
+
+	2. Theo dõi quá trình chạy đến khi hoàn tất, recompile các object trong DB sau khi chạy xong + kiểm tra file log
+
+	3. Liên hệ FSS sau khi xong hoặc khi có các vấn đề bất thường"
+2.2	Cập nhật HOSTService	
+	1. Backup các file SA.dll và CF.dll trên HOSTService có tên đúng như các file trong phần bàn giao ra 1 thư mục riêng để phục vụ rollback
+
+	2. Cập nhật các file SA.dll và CF.dll ở \FLEX\3.Service\HOSTService trong file bàn giao lên HOSTService
+
+	3.   Reset IIS máy dựng HostService (FLEX)"
+2.3	Cập nhật Client 	
+	1. Cập nhật bảng version trên DB theo version client mới 6500137
+
+	2. Cập nhật file 6500137.zip lên server để các user có thể update client version mới"
+2.4	Cập nhật Report	
+	1. Cập nhật bảng version trên DB theo version báo cáo mới
+
+	2. Cập nhật các file rpt ở FLEX\5.Reports theo version mới lên server cho user update được các file báo cáo rpt"

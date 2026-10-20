@@ -1,110 +1,532 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param([switch]$NoShow)
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName PresentationFramework,PresentationCore,WindowsBase,System.Windows.Forms
 $script:appRoot=Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $script:appRoot 'Core.Git.ps1');. (Join-Path $script:appRoot 'Core.FileOps.ps1');. (Join-Path $script:appRoot 'Core.SqlPlus.ps1')
+
 [xml]$xaml=Get-Content -LiteralPath (Join-Path $script:appRoot 'UI.xaml') -Raw -Encoding UTF8
 $window=[Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
-$names=@('InlineStatus','Step1Button','Step2Button','Step3Button','CollectScroll','CollectView','ReviewView','DeliverScroll','DeliverView','ChooseFilesButton','ChooseFolderButton','CollectProgress','CollectHint','AdvancedCollect','ExcludeRules','PasteInput','AddPathsButton','PasteResult','RepoPath','ChooseRepoButton','BaseBranch','CompareBranch','LoadBranchesButton','AddGitChangesButton','IncludeWorkspace','GitHint','ReviewSummary','SearchBox','FilterBox','EmptyState','FileGrid','ToggleFilteredButton','SelectAllButton','ClearSelectionButton','SortAscendingButton','SortDescendingButton','ReviewActionHint','RemoveSelectedButton','ContinueButton','DeliverTitle','DeliverSummary','DestinationPath','ChooseDestinationButton','DestinationInfo','ConflictInfo','DestinationError','BackToReviewButton','DuplicateMode','VerifyHash','SqlOptions','CreateRunScript','SqlSettingsLine','ConfigureSqlButton','SqlConfigError','DeliveryProgress','DeliveryStatus','StartDeliveryButton','CancelDeliveryButton','DeliveryOptions','ResultPanel','ResultTitle','ResultSummary','OpenDestinationButton','OpenManifestButton','ReviewErrorsButton')
+
+$names=@(
+    'InlineStatus','ProjectProfileCombo','Step1Button','Step2Button','Step3Button',
+    'CollectScroll','CollectView','ReviewView','DeliverScroll','DeliverView',
+    'CollectProgress','CollectHint','AdvancedCollect',
+    'ExcludeRules','PasteInput','AddPathsButton','PasteResult','RepoPath','ChooseRepoButton',
+    'BaseBranch','CompareBranch','LoadBranchesButton','AutoCheckoutAndPull','IncludeWorkspace',
+    'AddGitChangesButton','GitHint','ReviewSummary','SearchBox','FilterBox','EmptyState',
+    'FileGrid','ToggleFilteredButton','SelectAllButton','ClearSelectionButton','SortAscendingButton',
+    'SortDescendingButton','SortSqlFlexButton','ReviewActionHint','RemoveSelectedButton','ContinueButton',
+    'DeliverTitle','DeliverSummary','DestinationPath','ChooseDestinationButton','DestinationInfo',
+    'ConflictInfo','DestinationError','BackToReviewButton','DeliveryOptions','DuplicateMode',
+    'ProfileDeliveryHint','SqlOptions','CreateRunScript','SqlScriptDescription','SqlConfigError',
+    'SqlSettingsLine','ConfigureSqlButton','SqlConfigSummary','VerifyHash','DeliveryProgress',
+    'DeliveryStatus','StartDeliveryButton','CancelDeliveryButton','ResultPanel','ResultTitle',
+    'ResultSummary','OpenDestinationButton','OpenManifestButton','ReviewErrorsButton'
+)
 foreach($name in $names){Set-Variable -Name $name -Value $window.FindName($name) -Scope Script}
+
+$script:currentProfile='BSC'
 $script:items=New-Object 'System.Collections.ObjectModel.ObservableCollection[object]'
 $script:viewItems=New-Object 'System.Collections.ObjectModel.ObservableCollection[object]'
 $script:knownSources=New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
-$script:db=[pscustomobject]@{User='HOSTBVSFUND';Password='';Tns='FLEX_236';Log='../log/install.log'}
+$script:db=[pscustomobject]@{User='HOSTBVSFUND';Password='HOST';Tns='FLEX_236';Log='../log/install.log'}
 $script:sqlDefaultApplied=$false
 $script:searchTimer=New-Object Windows.Threading.DispatcherTimer;$script:searchTimer.Interval=[TimeSpan]::FromMilliseconds(300)
 $script:destinationTimer=New-Object Windows.Threading.DispatcherTimer;$script:destinationTimer.Interval=[TimeSpan]::FromMilliseconds(350)
-$FileGrid.ItemsSource=$script:viewItems;$CollectHint.TextWrapping='Wrap';$PasteResult.TextWrapping='Wrap';$DestinationError.TextWrapping='Wrap'
-$Step1Button.TabIndex=1;$Step2Button.TabIndex=2;$Step3Button.TabIndex=3;$AdvancedCollect.TabIndex=12;$SelectAllButton.TabIndex=42;$ClearSelectionButton.TabIndex=43;$SortAscendingButton.TabIndex=44;$SortDescendingButton.TabIndex=45;$RemoveSelectedButton.TabIndex=46;$ContinueButton.TabIndex=47;$BackToReviewButton.TabIndex=49;$CancelDeliveryButton.TabIndex=57;$OpenDestinationButton.TabIndex=58;$OpenManifestButton.TabIndex=59;$ReviewErrorsButton.TabIndex=60
+
+$FileGrid.ItemsSource=$script:viewItems
+$CollectHint.TextWrapping='Wrap';$PasteResult.TextWrapping='Wrap';$DestinationError.TextWrapping='Wrap'
+$Step1Button.TabIndex=1;$Step2Button.TabIndex=2;$Step3Button.TabIndex=3;$AdvancedCollect.TabIndex=12
+$SelectAllButton.TabIndex=42;$ClearSelectionButton.TabIndex=43;$SortAscendingButton.TabIndex=44
+$SortDescendingButton.TabIndex=45;$SortSqlFlexButton.TabIndex=46;$RemoveSelectedButton.TabIndex=47
+$ContinueButton.TabIndex=48;$BackToReviewButton.TabIndex=49;$CancelDeliveryButton.TabIndex=57
+$OpenDestinationButton.TabIndex=58;$OpenManifestButton.TabIndex=59;$ReviewErrorsButton.TabIndex=60
 [Windows.Controls.ToolTipService]::SetShowOnDisabled($Step2Button,$true);[Windows.Controls.ToolTipService]::SetShowOnDisabled($Step3Button,$true)
 
 function Format-FileCount([int]$Count) {
- "{0} file{1}" -f $Count, $(if($Count -eq 1){''}else{'s'})
+    "{0} file{1}" -f $Count, $(if($Count -eq 1){''}else{'s'})
 }
 
-function Set-Status([string]$Text,[string]$Color='#1463D6'){$InlineStatus.Text=$Text;$InlineStatus.Foreground=[Windows.Media.BrushConverter]::new().ConvertFromString($Color)}
-function Get-SelectedItems{return @($script:items|Where-Object Included)}
-function Get-FileType([string]$Path){$ext=[IO.Path]::GetExtension($Path).TrimStart('.');if(-not $ext){return 'Other'};return $ext.ToUpperInvariant()}
-function Convert-UiStatus([string]$Status){if($Status -match '^Ready'){return 'Ready'};if($Status -match '^Git'){return 'Modified'};if($Status -match '^Copied and verified'){return 'Copied and verified'};if($Status -match '^Copied'){return 'Copied'};if($Status -match '^Skipped'){return 'Skip'};if($Status -match '^Cancelled'){return 'Cancelled'};if($Status -match '^(Error|Failed)'){return 'Error: '+($Status -replace '^(Error|Failed):?\s*','')};return $Status}
-function Set-Step([int]$Step){$CollectScroll.Visibility=if($Step -eq 1){'Visible'}else{'Collapsed'};$CollectView.Visibility=if($Step -eq 1){'Visible'}else{'Collapsed'};$ReviewView.Visibility=if($Step -eq 2){'Visible'}else{'Collapsed'};$DeliverScroll.Visibility=if($Step -eq 3){'Visible'}else{'Collapsed'};$DeliverView.Visibility=if($Step -eq 3){'Visible'}else{'Collapsed'};foreach($pair in @(@($Step1Button,1),@($Step2Button,2),@($Step3Button,3))){$pair[0].Background=if($pair[1] -eq $Step){[Windows.Media.Brushes]::AliceBlue}else{[Windows.Media.Brushes]::Transparent};$pair[0].Foreground=if($pair[1] -eq $Step){[Windows.Media.BrushConverter]::new().ConvertFromString('#1463D6')}else{[Windows.Media.BrushConverter]::new().ConvertFromString('#28384D')}}}
+function Set-Status([string]$Text,[string]$Color='#1463D6'){
+    $InlineStatus.Text=$Text
+    $InlineStatus.Foreground=[Windows.Media.BrushConverter]::new().ConvertFromString($Color)
+}
+
+function Get-SelectedItems{ return @($script:items | Where-Object Included) }
+function Get-FileType([string]$Path){
+    $ext=[IO.Path]::GetExtension($Path).TrimStart('.')
+    if(-not $ext){return 'Other'}
+    return $ext.ToUpperInvariant()
+}
+
+function Convert-UiStatus([string]$Status){
+    if($Status -match '^Ready'){return 'Ready'}
+    if($Status -match '^Git'){return 'Modified'}
+    if($Status -match '^Copied and verified'){return 'Copied and verified'}
+    if($Status -match '^Copied'){return 'Copied'}
+    if($Status -match '^Skipped'){return 'Skip'}
+    if($Status -match '^Cancelled'){return 'Cancelled'}
+    if($Status -match '^(Error|Failed)'){return 'Error: '+($Status -replace '^(Error|Failed):?\s*','')}
+    return $Status
+}
+
+function Set-Step([int]$Step){
+    $CollectScroll.Visibility=if($Step -eq 1){'Visible'}else{'Collapsed'}
+    $CollectView.Visibility=if($Step -eq 1){'Visible'}else{'Collapsed'}
+    $ReviewView.Visibility=if($Step -eq 2){'Visible'}else{'Collapsed'}
+    $DeliverScroll.Visibility=if($Step -eq 3){'Visible'}else{'Collapsed'}
+    $DeliverView.Visibility=if($Step -eq 3){'Visible'}else{'Collapsed'}
+    foreach($pair in @(@($Step1Button,1),@($Step2Button,2),@($Step3Button,3))){
+        $pair[0].Background=if($pair[1] -eq $Step){[Windows.Media.Brushes]::AliceBlue}else{[Windows.Media.Brushes]::Transparent}
+        $pair[0].Foreground=if($pair[1] -eq $Step){[Windows.Media.BrushConverter]::new().ConvertFromString('#1463D6')}else{[Windows.Media.BrushConverter]::new().ConvertFromString('#28384D')}
+    }
+}
+
+function Set-DeliveryProfile([string]$Profile, [bool]$UpdateDbDefaults=$true) {
+    $script:currentProfile = $Profile
+    if ($Profile -eq 'BVSC') {
+        if ($ProjectProfileCombo.SelectedIndex -ne 0) { $ProjectProfileCombo.SelectedIndex = 0 }
+        if ($UpdateDbDefaults) {
+            $script:db.User = 'HOSTBVSFUND'
+            $script:db.Password = 'HOST'
+            $script:db.Tns = 'FLEX_236'
+        }
+        $ProfileDeliveryHint.Text = "BVSC Mode: 2.HOST files map to 2.HOST\upgrade\sql\2.HOST. Also includes Huong_dan_cap_nhat.txt and Huong dan runall.sql from the BVSC template."
+        $SqlScriptDescription.Text = "BVSC: Automatically generates runUpdate.bat, setVariable.bat, install.sql, and the two BVSC instruction files."
+    } else {
+        if ($ProjectProfileCombo.SelectedIndex -ne 1) { $ProjectProfileCombo.SelectedIndex = 1 }
+        if ($UpdateDbDefaults) {
+            $script:db.User = 'HOSTBSCFUND'
+            $script:db.Password = 'HOST'
+            $script:db.Tns = 'FLEX189'
+        }
+        $ProfileDeliveryHint.Text = "BSC Mode: Preserves the repository structure (1.BDSHOST, 2.HOST, 3.Service...). Creates runscript.txt only; no runscript.sql or delivery manifest."
+        $SqlScriptDescription.Text = "BSC: Generates runscript.txt at the destination root. Each @ command uses the absolute path of the source SQL file in the local repository."
+    }
+    $SqlConfigSummary.Text = "DB: $($script:db.User)@$($script:db.Tns)"
+    $OpenManifestButton.Visibility = 'Collapsed'
+
+    # Recompute relative path for existing items
+    foreach ($item in $script:items) {
+        $srcRoot = if ($item.PSObject.Properties['SourceRoot'] -and $item.SourceRoot) { $item.SourceRoot } else { $RepoPath.Text.Trim() }
+        $preserve = if ($item.PSObject.Properties['PreserveStructure']) { $item.PreserveStructure } else { $true }
+        $item.Relative = Get-DeliveryRelativePath -Source $srcRoot -Path $item.Source -PreserveStructure $preserve -Profile $script:currentProfile
+    }
+    Update-Ui
+}
+
+function Show-StartupProfileDialog {
+    [xml]$sx=@'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Select Delivery Project Mode" Width="540" Height="340" ResizeMode="NoResize" WindowStartupLocation="CenterScreen"
+    Background="#F5F7FA" FontFamily="Segoe UI Variable, Segoe UI">
+    <Window.Resources>
+        <Style TargetType="{x:Type Control}"><Setter Property="FocusVisualStyle" Value="{x:Null}"/></Style>
+        <Style x:Key="ProfileCard" TargetType="Button">
+            <Setter Property="Background" Value="White"/><Setter Property="BorderBrush" Value="#D7DFE9"/><Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="18"/><Setter Property="Cursor" Value="Hand"/><Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="10" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="bd" Property="BorderBrush" Value="#1463D6"/><Setter TargetName="bd" Property="Background" Value="#F0F7FF"/></Trigger>
+                            <Trigger Property="IsPressed" Value="True"><Setter TargetName="bd" Property="Opacity" Value=".85"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+    <Grid Margin="24">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <StackPanel>
+            <TextBlock Text="Choose Delivery Project Profile" FontSize="18" FontWeight="SemiBold" Foreground="#17263C"/>
+            <TextBlock Text="Select how delivery package paths and deployment scripts should be formatted:" Margin="0,4,0,16" Foreground="#5D6B7E"/>
+        </StackPanel>
+        <Grid Grid.Row="1">
+            <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="12"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+            <Button x:Name="BvscOption" Style="{StaticResource ProfileCard}" Grid.Row="0">
+                <StackPanel>
+                    <TextBlock Text="BVSC (Bao Viet Securities)" FontSize="15" FontWeight="SemiBold" Foreground="#1463D6"/>
+                    <TextBlock Text="Organizes into 2.HOST\upgrade\sql\2.HOST. Creates runUpdate.bat, setVariable.bat, and install.sql." Margin="0,3,0,0" Foreground="#5D6B7E" TextWrapping="Wrap"/>
+                </StackPanel>
+            </Button>
+            <Button x:Name="OtherOption" Style="{StaticResource ProfileCard}" Grid.Row="2">
+                <StackPanel>
+                    <TextBlock Text="BSC" FontSize="15" FontWeight="SemiBold" Foreground="#17263C"/>
+                    <TextBlock Text="Preserves the repository structure and generates runscript.txt with absolute local-repository SQL paths. Does not create runscript.sql or a delivery manifest." Margin="0,3,0,0" Foreground="#5D6B7E" TextWrapping="Wrap"/>
+                </StackPanel>
+            </Button>
+        </Grid>
+        <TextBlock Grid.Row="2" Text="You can also switch profiles anytime at the top bar." Margin="0,14,0,0" Foreground="#8C98A8" FontSize="11" HorizontalAlignment="Center"/>
+    </Grid>
+</Window>
+'@
+    $dlg=[Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $sx))
+    if ($window.IsVisible) { $dlg.Owner = $window }
+    $bvscBtn=$dlg.FindName('BvscOption')
+    $otherBtn=$dlg.FindName('OtherOption')
+    $bvscBtn.Add_Click({ Set-DeliveryProfile 'BVSC'; $dlg.Close() })
+    $otherBtn.Add_Click({ Set-DeliveryProfile 'BSC'; $dlg.Close() })
+    [void]$dlg.ShowDialog()
+}
+
 function Update-Ui([bool]$RefreshGrid=$true) {
- $selected=@(Get-SelectedItems);[long]$bytes=0;foreach($i in $selected){$bytes+=[long]$i.Size};$sql=(@($selected|Where-Object {[IO.Path]::GetExtension($_.Relative).Equals('.sql',[StringComparison]::OrdinalIgnoreCase)})).Count
- $Step2Button.IsEnabled=($script:items.Count -gt 0);$Step2Button.Content="2  Review ($($script:items.Count))";$Step3Button.IsEnabled=($selected.Count -gt 0)
- $Step2Button.ToolTip=if($Step2Button.IsEnabled){$null}else{'Add at least one file to review.'};$Step3Button.ToolTip=if($Step3Button.IsEnabled){$null}else{'Include at least one file to continue to delivery.'}
- $ReviewSummary.Text="$(Format-FileCount $script:items.Count) | $($selected.Count) selected | $(Format-DeliverySize $bytes) | $sql SQL";$ContinueButton.Content=('Continue ('+(Format-FileCount $selected.Count)+')');$ContinueButton.IsEnabled=($selected.Count -gt 0)
- $DeliverTitle.Text="Deliver $(Format-FileCount $selected.Count) | $(Format-DeliverySize $bytes)";$DeliverSummary.Text='Select a destination folder, then start delivery.';$SqlOptions.Visibility=if($sql){'Visible'}else{'Collapsed'};$EmptyState.Visibility=if($script:items.Count){'Collapsed'}else{'Visible'}
- if($sql -and -not $script:sqlDefaultApplied){$CreateRunScript.IsChecked=$true;$script:sqlDefaultApplied=$true};if(-not $sql){$script:sqlDefaultApplied=$false};Update-DestinationState
- if($RefreshGrid){Refresh-Grid}
+    $selected=@(Get-SelectedItems);[long]$bytes=0;foreach($i in $selected){$bytes+=[long]$i.Size}
+    $sql=(@($selected | Where-Object {[IO.Path]::GetExtension($_.Relative).Equals('.sql',[StringComparison]::OrdinalIgnoreCase)})).Count
+    $Step2Button.IsEnabled=($script:items.Count -gt 0)
+    $Step2Button.Content="2  Review ($($script:items.Count))"
+    $Step3Button.IsEnabled=($selected.Count -gt 0)
+    $Step2Button.ToolTip=if($Step2Button.IsEnabled){$null}else{'Add at least one file to review.'}
+    $Step3Button.ToolTip=if($Step3Button.IsEnabled){$null}else{'Include at least one file to continue to delivery.'}
+    $ReviewSummary.Text="$(Format-FileCount $script:items.Count) | $($selected.Count) selected | $(Format-DeliverySize $bytes) | $sql SQL"
+    $ContinueButton.Content=('Continue ('+(Format-FileCount $selected.Count)+')')
+    $ContinueButton.IsEnabled=($selected.Count -gt 0)
+    $DeliverTitle.Text="Deliver $(Format-FileCount $selected.Count) | $(Format-DeliverySize $bytes)"
+    $DeliverSummary.Text='Select a destination folder, then start delivery.'
+    $SqlOptions.Visibility=if($sql){'Visible'}else{'Collapsed'}
+    $EmptyState.Visibility=if($script:items.Count){'Collapsed'}else{'Visible'}
+    if($sql -and -not $script:sqlDefaultApplied){$CreateRunScript.IsChecked=$true;$script:sqlDefaultApplied=$true}
+    if(-not $sql){$script:sqlDefaultApplied=$false}
+    Update-DestinationState
+    if($RefreshGrid){Refresh-Grid}
 }
+
 function Refresh-Grid {
- $query=$SearchBox.Text.Trim();$filter=if($FilterBox.SelectedItem){$FilterBox.SelectedItem.Content}else{'All'};$script:viewItems.Clear()
- foreach($item in $script:items){$ok=([string]::IsNullOrWhiteSpace($query) -or $item.FileName.IndexOf($query,[StringComparison]::OrdinalIgnoreCase)-ge 0 -or $item.Source.IndexOf($query,[StringComparison]::OrdinalIgnoreCase)-ge 0 -or $item.Relative.IndexOf($query,[StringComparison]::OrdinalIgnoreCase)-ge 0);if($ok){switch($filter){'Included'{$ok=$item.Included};'Not included'{$ok=-not $item.Included};'SQL'{$ok=[IO.Path]::GetExtension($item.Relative).Equals('.sql',[StringComparison]::OrdinalIgnoreCase)};'Errors'{$ok=$item.Status -match 'Error|Failed'}}};if($ok){[void]$script:viewItems.Add($item)}}
- $ToggleFilteredButton.IsChecked=($script:viewItems.Count -gt 0 -and @($script:viewItems|Where-Object {-not $_.Included}).Count -eq 0);$FileGrid.Items.Refresh()
+    $query=$SearchBox.Text.Trim()
+    $filter=if($FilterBox.SelectedItem){$FilterBox.SelectedItem.Content}else{'All'}
+    $script:viewItems.Clear()
+    foreach($item in $script:items){
+        $ok=([string]::IsNullOrWhiteSpace($query) -or $item.FileName.IndexOf($query,[StringComparison]::OrdinalIgnoreCase)-ge 0 -or $item.Source.IndexOf($query,[StringComparison]::OrdinalIgnoreCase)-ge 0 -or $item.Relative.IndexOf($query,[StringComparison]::OrdinalIgnoreCase)-ge 0)
+        if($ok){
+            switch($filter){
+                'Included'{$ok=$item.Included}
+                'Not included'{$ok=-not $item.Included}
+                'SQL'{$ok=[IO.Path]::GetExtension($item.Relative).Equals('.sql',[StringComparison]::OrdinalIgnoreCase)}
+                'Errors'{$ok=$item.Status -match 'Error|Failed'}
+            }
+        }
+        if($ok){[void]$script:viewItems.Add($item)}
+    }
+    $ToggleFilteredButton.IsChecked=($script:viewItems.Count -gt 0 -and @($script:viewItems|Where-Object {-not $_.Included}).Count -eq 0)
+    $FileGrid.Items.Refresh()
 }
+
 function Update-DestinationState {
- $dest=$DestinationPath.Text.Trim();$selected=@(Get-SelectedItems)
- if(-not $dest){$DestinationInfo.Text='Choose a destination folder.';$DestinationInfo.Foreground=[Windows.Media.BrushConverter]::new().ConvertFromString('#5D6B7E');$ConflictInfo.Text='';return}
- if(-not (Test-Path -LiteralPath $dest -PathType Container)){$DestinationInfo.Text='Folder does not exist. It will be created only after you confirm delivery.';$DestinationInfo.Foreground=[Windows.Media.BrushConverter]::new().ConvertFromString('#A96500');$ConflictInfo.Text='';return}
- $DestinationInfo.Text='Folder exists.';$DestinationInfo.Foreground=[Windows.Media.BrushConverter]::new().ConvertFromString('#5D6B7E')
- $conflicts=@($selected|Where-Object {Test-Path -LiteralPath (Join-Path $dest $_.Relative)}).Count
- $ConflictInfo.Text=if($conflicts){"$conflicts of $($selected.Count) selected files already exist in this folder."}else{'No selected files currently exist in this folder.'}
+    $root=$DestinationPath.Text.Trim();$selected=@(Get-SelectedItems)
+    if(-not $root){$DestinationInfo.Text='Choose a destination folder.';$DestinationInfo.Foreground=[Windows.Media.BrushConverter]::new().ConvertFromString('#5D6B7E');$ConflictInfo.Text='';return}
+    $branchFolder=ConvertTo-DeliveryBranchFolderName $CompareBranch.Text
+    $dest=if($branchFolder){Join-Path $root $branchFolder}else{$root}
+    $branchMessage=if($branchFolder){" Delivery will be placed in '$branchFolder'."}else{''}
+    if(-not (Test-Path -LiteralPath $root -PathType Container)){$DestinationInfo.Text="Destination root does not exist. The delivery folder will be created after confirmation.$branchMessage";$DestinationInfo.Foreground=[Windows.Media.BrushConverter]::new().ConvertFromString('#A96500');$ConflictInfo.Text='';return}
+    if(-not (Test-Path -LiteralPath $dest -PathType Container)){$DestinationInfo.Text="Delivery folder: $dest (will be created).";$DestinationInfo.Foreground=[Windows.Media.BrushConverter]::new().ConvertFromString('#5D6B7E');$ConflictInfo.Text='';return}
+    $DestinationInfo.Text="Delivery folder: $dest";$DestinationInfo.Foreground=[Windows.Media.BrushConverter]::new().ConvertFromString('#5D6B7E')
+    $conflicts=@($selected|Where-Object {Test-Path -LiteralPath (Join-Path $dest $_.Relative)}).Count
+    $ConflictInfo.Text=if($conflicts){"$conflicts of $($selected.Count) selected files already exist in this folder."}else{'No selected files currently exist in this folder.'}
 }
+
 function Sort-ReviewItems([bool]$Descending) {
- $ordered=@($script:items|Sort-Object -Property Relative -Descending:$Descending);$script:items.Clear();foreach($item in $ordered){[void]$script:items.Add($item)}
- Refresh-Grid;$ReviewActionHint.Text=if($Descending){'Sorted Z to A.'}else{'Sorted A to Z.'}
+    $ordered=@($script:items | Sort-Object -Property Relative -Descending:$Descending)
+    $script:items.Clear()
+    foreach($item in $ordered){[void]$script:items.Add($item)}
+    Refresh-Grid
+    $ReviewActionHint.Text=if($Descending){'Sorted Z to A.'}else{'Sorted A to Z.'}
 }
-function Add-Items([object[]]$Files,[hashtable]$GitStatus=@{}) {
- $added=0;$duplicates=0;foreach($file in $Files){if(-not $file){continue};if(-not $script:knownSources.Add($file.FullName)){$duplicates++;continue};$git=if($GitStatus.ContainsKey($file.FullName)){$GitStatus[$file.FullName]}else{$null};$item=New-DeliveryItem $file $RepoPath.Text.Trim() $true $git;$item.Status=Convert-UiStatus $item.Status;$item|Add-Member NoteProperty FileName ([IO.Path]::GetFileName($file.FullName));$item|Add-Member NoteProperty SourceFolder (Split-Path $file.FullName -Parent);$item|Add-Member NoteProperty FileType (Get-FileType $file.FullName);[void]$script:items.Add($item);$added++}
- Update-Ui;return [pscustomobject]@{Added=$added;Duplicates=$duplicates}
+
+function Sort-ReviewItemsFlexDb {
+    $ordered=@($script:items | Sort-Object -Property { Get-DeliverySqlPriority $_.Relative }, { $_.Relative })
+    $script:items.Clear()
+    foreach($item in $ordered){[void]$script:items.Add($item)}
+    Refresh-Grid
+    $ReviewActionHint.Text='Sorted by FlexDB execution order.'
 }
+
+function Add-Items([object[]]$Files,[hashtable]$GitStatus=@{},[string]$SourceRoot=$null) {
+    $added=0;$duplicates=0
+    $root=if($SourceRoot){$SourceRoot}elseif($RepoPath.Text.Trim()){$RepoPath.Text.Trim()}else{''}
+    foreach($file in $Files){
+        if(-not $file){continue}
+        if(-not $script:knownSources.Add($file.FullName)){$duplicates++;continue}
+        $git=if($GitStatus.ContainsKey($file.FullName)){$GitStatus[$file.FullName]}else{$null}
+        $item=New-DeliveryItem -File $file -Source $root -PreserveStructure $true -GitStatus $git -Profile $script:currentProfile
+        $item.Status=Convert-UiStatus $item.Status
+        $item|Add-Member NoteProperty FileName ([IO.Path]::GetFileName($file.FullName))
+        $item|Add-Member NoteProperty SourceFolder (Split-Path $file.FullName -Parent)
+        $item|Add-Member NoteProperty FileType (Get-FileType $file.FullName)
+        [void]$script:items.Add($item)
+        $added++
+    }
+    Update-Ui
+    return [pscustomobject]@{Added=$added;Duplicates=$duplicates}
+}
+
 function Add-DirectPaths([string[]]$Paths,[hashtable]$GitStatus=@{}) {
- $files=New-Object System.Collections.Generic.List[object];foreach($path in $Paths){if(Test-Path -LiteralPath $path -PathType Leaf){$f=Get-Item -LiteralPath $path;if(-not(Test-DeliveryExcludedPath $f.FullName $ExcludeRules.Text)){[void]$files.Add($f)}}elseif(Test-Path -LiteralPath $path -PathType Container){Start-FolderScan @($path) $GitStatus}}
- if($files.Count){return Add-Items -Files @($files.ToArray()) -GitStatus $GitStatus};return [pscustomobject]@{Added=0;Duplicates=0}
+    $files=New-Object System.Collections.Generic.List[object]
+    foreach($path in $Paths){
+        if(Test-Path -LiteralPath $path -PathType Leaf){
+            $f=Get-Item -LiteralPath $path
+            if(-not(Test-DeliveryExcludedPath $f.FullName $ExcludeRules.Text)){[void]$files.Add($f)}
+        }elseif(Test-Path -LiteralPath $path -PathType Container){
+            Start-FolderScan @($path) $GitStatus
+        }
+    }
+    if($files.Count){return Add-Items -Files @($files.ToArray()) -GitStatus $GitStatus}
+    return [pscustomobject]@{Added=0;Duplicates=0}
 }
+
 function Start-FolderScan([string[]]$Paths,[hashtable]$GitStatus=@{}) {
- $ChooseFilesButton.IsEnabled=$false;$ChooseFolderButton.IsEnabled=$false;$CollectProgress.Visibility='Visible';$CollectHint.Text='Scanning files...';Set-Status 'Scanning files...';$script:scanGit=$GitStatus
- $script:scanJob=Start-Job -ArgumentList (Join-Path $script:appRoot 'Core.FileOps.ps1'),$Paths,$ExcludeRules.Text -ScriptBlock {param($m,$p,$rules);. $m;Get-DeliveryFiles -Paths $p -ExcludeRules $rules}
- $script:scanTimer=New-Object Windows.Threading.DispatcherTimer;$script:scanTimer.Interval=[TimeSpan]::FromMilliseconds(150);$script:scanTimer.Add_Tick({if($script:scanJob.State -notin @('Completed','Failed','Stopped')){return};$script:scanTimer.Stop();$ChooseFilesButton.IsEnabled=$true;$ChooseFolderButton.IsEnabled=$true;$CollectProgress.Visibility='Collapsed';if($script:scanJob.State -ne 'Completed'){Set-Status 'File scan failed. Choose the folder again.' '#B42318';return};$files=@(Receive-Job $script:scanJob);Remove-Job $script:scanJob -Force;$r=Add-Items -Files $files -GitStatus $script:scanGit;$CollectHint.Text=('Added '+(Format-FileCount $r.Added)+'.');Set-Status ('Added '+(Format-FileCount $r.Added)) '#16794A';if($r.Added){Set-Step 2}});$script:scanTimer.Start()
+    $CollectProgress.Visibility='Visible'
+    $CollectHint.Text='Scanning files...';Set-Status 'Scanning files...'
+    $script:scanGit=$GitStatus;$script:scanRoot=$Paths[0]
+    $script:scanJob=Start-Job -ArgumentList (Join-Path $script:appRoot 'Core.FileOps.ps1'),$Paths,$ExcludeRules.Text -ScriptBlock {
+        param($m,$p,$rules);. $m;Get-DeliveryFiles -Paths $p -ExcludeRules $rules
+    }
+    $script:scanTimer=New-Object Windows.Threading.DispatcherTimer
+    $script:scanTimer.Interval=[TimeSpan]::FromMilliseconds(150)
+    $script:scanTimer.Add_Tick({
+        if($script:scanJob.State -notin @('Completed','Failed','Stopped')){return}
+        $script:scanTimer.Stop()
+        $CollectProgress.Visibility='Collapsed'
+        if($script:scanJob.State -ne 'Completed'){Set-Status 'File scan failed. Choose the folder again.' '#B42318';return}
+        $files=@(Receive-Job $script:scanJob);Remove-Job $script:scanJob -Force
+        $r=Add-Items -Files $files -GitStatus $script:scanGit -SourceRoot $script:scanRoot
+        $CollectHint.Text=('Added '+(Format-FileCount $r.Added)+'.')
+        Set-Status ('Added '+(Format-FileCount $r.Added)) '#16794A'
+        if($r.Added){Set-Step 2}
+    })
+    $script:scanTimer.Start()
 }
+
 function Add-PastedPaths {
- $valid=New-Object System.Collections.Generic.List[string];$invalid=New-Object System.Collections.Generic.List[string];foreach($line in ($PasteInput.Text -split "`r?`n")){$value=$line.Trim().Trim('"');if(-not $value){continue};if($value.Contains("`t")){$value=@($value -split "`t"|Where-Object {$_.Trim()}|Select-Object -Last 1).Trim()};if(-not [IO.Path]::IsPathRooted($value)){$base=if($RepoPath.Text.Trim()){$RepoPath.Text.Trim()}else{''};if($base){$value=Join-Path $base $value}};if(Test-Path -LiteralPath $value){[void]$valid.Add($value)}else{[void]$invalid.Add($value)}}
- $r=Add-DirectPaths @($valid);$PasteResult.Text=('Added '+(Format-FileCount $r.Added)+" | $($invalid.Count) invalid paths");if($r.Added){$PasteInput.Clear();Set-Status ('Added '+(Format-FileCount $r.Added)) '#16794A';Set-Step 2}
+    $valid=New-Object System.Collections.Generic.List[string]
+    $invalid=New-Object System.Collections.Generic.List[string]
+    foreach($line in ($PasteInput.Text -split "`r?`n")){
+        $value=$line.Trim().Trim('"')
+        if(-not $value){continue}
+        if($value.Contains("`t")){$value=@($value -split "`t"|Where-Object {$_.Trim()}|Select-Object -Last 1).Trim()}
+        if(-not [IO.Path]::IsPathRooted($value)){
+            $base=if($RepoPath.Text.Trim()){$RepoPath.Text.Trim()}else{''}
+            if($base){$value=Join-Path $base $value}
+        }
+        if(Test-Path -LiteralPath $value){[void]$valid.Add($value)}else{[void]$invalid.Add($value)}
+    }
+    $r=Add-DirectPaths @($valid)
+    $PasteResult.Text=('Added '+(Format-FileCount $r.Added)+" | $($invalid.Count) invalid paths")
+    if($r.Added){$PasteInput.Clear();Set-Status ('Added '+(Format-FileCount $r.Added)) '#16794A';Set-Step 2}
 }
+
 function Show-SqlDialog {
- [xml]$dx='<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Configure SQL*Plus" Width="500" Height="330" ResizeMode="NoResize" WindowStartupLocation="CenterOwner" FontFamily="Segoe UI"><Window.Resources><Style TargetType="{x:Type Control}"><Setter Property="FocusVisualStyle" Value="{x:Null}"/></Style></Window.Resources><Grid Margin="24"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="12"/><RowDefinition Height="Auto"/><RowDefinition Height="12"/><RowDefinition Height="Auto"/><RowDefinition Height="12"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions><TextBlock Text="Configure SQL*Plus" FontSize="18" FontWeight="SemiBold"/><StackPanel Grid.Row="2"><TextBlock Text="DB user"/><TextBox x:Name="User" Height="34" Margin="0,4,0,0" TabIndex="1"/></StackPanel><StackPanel Grid.Row="4"><TextBlock Text="Password (memory only)"/><PasswordBox x:Name="Password" Height="34" Margin="0,4,0,0" TabIndex="2"/></StackPanel><StackPanel Grid.Row="6"><TextBlock Text="TNS name"/><TextBox x:Name="Tns" Height="34" Margin="0,4,0,0" TabIndex="3"/></StackPanel><TextBlock x:Name="DialogError" Grid.Row="7" Foreground="#B42318" Visibility="Collapsed"/><TextBlock Grid.Row="7" Text="Password is kept in memory only. The script never stores it." Margin="0,12,0,0" Foreground="#5D6B7E"/><StackPanel Grid.Row="8" Orientation="Horizontal" HorizontalAlignment="Right"><Button x:Name="Cancel" Content="Cancel" IsCancel="True" Margin="0,0,8,0"/><Button x:Name="Save" Content="Save for this session" IsDefault="True"/></StackPanel></Grid></Window>'
- $d=[Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $dx));$d.Owner=$window;$u=$d.FindName('User');$p=$d.FindName('Password');$t=$d.FindName('Tns');$u.Text=$script:db.User;$p.Password=$script:db.Password;$t.Text=$script:db.Tns;$err=$d.FindName('DialogError');$d.FindName('Save').Add_Click({if(-not $u.Text.Trim()){$err.Text='DB user is required.';$err.Visibility='Visible';return};if(-not $t.Text.Trim()){$err.Text='TNS name is required.';$err.Visibility='Visible';return};$script:db.User=$u.Text.Trim();$script:db.Password=$p.Password;$script:db.Tns=$t.Text.Trim();$d.DialogResult=$true});[void]$d.ShowDialog()
+    [xml]$dx=@'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Configure DB Credentials" Width="500" Height="360" ResizeMode="NoResize" WindowStartupLocation="CenterOwner" FontFamily="Segoe UI">
+    <Window.Resources><Style TargetType="{x:Type Control}"><Setter Property="FocusVisualStyle" Value="{x:Null}"/></Style></Window.Resources>
+    <Grid Margin="24">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="12"/><RowDefinition Height="Auto"/><RowDefinition Height="12"/><RowDefinition Height="Auto"/><RowDefinition Height="12"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <TextBlock Text="Configure DB Credentials" FontSize="18" FontWeight="SemiBold"/>
+        <StackPanel Grid.Row="2"><TextBlock Text="DB user"/><TextBox x:Name="User" Height="34" Margin="0,4,0,0" TabIndex="1"/></StackPanel>
+        <StackPanel Grid.Row="4"><TextBlock Text="Password"/><TextBox x:Name="Password" Height="34" Margin="0,4,0,0" TabIndex="2"/></StackPanel>
+        <StackPanel Grid.Row="6"><TextBlock Text="TNS name"/><TextBox x:Name="Tns" Height="34" Margin="0,4,0,0" TabIndex="3"/></StackPanel>
+        <TextBlock x:Name="DialogError" Grid.Row="7" Foreground="#B42318" Visibility="Collapsed"/>
+        <TextBlock Grid.Row="7" Text="These credentials are written to setVariable.bat (BVSC) or runscript.txt (Other)." Margin="0,12,0,0" Foreground="#5D6B7E"/>
+        <StackPanel Grid.Row="8" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="Cancel" Content="Cancel" IsCancel="True" Margin="0,0,8,0" Width="80" Height="32"/>
+            <Button x:Name="Save" Content="Save for this session" IsDefault="True" Width="140" Height="32"/>
+        </StackPanel>
+    </Grid>
+</Window>
+'@
+    $d=[Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $dx))
+    if ($window.IsVisible) { $d.Owner=$window }
+    $u=$d.FindName('User');$p=$d.FindName('Password');$t=$d.FindName('Tns');$err=$d.FindName('DialogError')
+    $u.Text=$script:db.User;$p.Text=$script:db.Password;$t.Text=$script:db.Tns
+    $d.FindName('Save').Add_Click({
+        if(-not $u.Text.Trim()){$err.Text='DB user is required.';$err.Visibility='Visible';return}
+        if(-not $t.Text.Trim()){$err.Text='TNS name is required.';$err.Visibility='Visible';return}
+        $script:db.User=$u.Text.Trim();$script:db.Password=$p.Text.Trim();$script:db.Tns=$t.Text.Trim()
+        $SqlConfigSummary.Text="DB: $($script:db.User)@$($script:db.Tns)"
+        $d.DialogResult=$true
+    })
+    [void]$d.ShowDialog()
 }
+
 function Start-Delivery {
- $selected=@(Get-SelectedItems);$dest=$DestinationPath.Text.Trim();if(-not $dest){$DestinationError.Text='Choose a destination folder.';$DestinationError.Visibility='Visible';return};if(-not(Test-Path -LiteralPath $dest -PathType Container)){if([Windows.MessageBox]::Show("The destination folder does not exist:`n$dest`n`nCreate it and continue?",'Create destination folder',[Windows.MessageBoxButton]::YesNo,[Windows.MessageBoxImage]::Warning) -ne 'Yes'){return};try{New-Item -ItemType Directory -Path $dest -Force -ErrorAction Stop|Out-Null}catch{$DestinationError.Text=('Could not create destination folder: '+$_.Exception.Message);$DestinationError.Visibility='Visible';return}};$DestinationError.Visibility='Collapsed';Update-DestinationState
- $mode=@('Skip','Overwrite','Rename automatically')[$DuplicateMode.SelectedIndex];if($mode -eq 'Overwrite'){$count=@($selected|Where-Object {Test-Path -LiteralPath (Join-Path $dest $_.Relative)}).Count;if($count -and [Windows.MessageBox]::Show("There are $count existing destination files. Overwrite them?",'Confirm overwrite',[Windows.MessageBoxButton]::YesNo,[Windows.MessageBoxImage]::Warning) -ne 'Yes'){return}}
- $verify=[bool]$VerifyHash.IsChecked;$run=[bool]$CreateRunScript.IsChecked;$SqlConfigError.Visibility='Collapsed';if($run){$missing=@();if(-not $script:db.User.Trim()){$missing+='DB user'};if(-not $script:db.Tns.Trim()){$missing+='TNS name'};if($missing.Count){$SqlConfigError.Text='SQL*Plus is not configured (missing: '+($missing -join ', ')+'). Click Configure SQL*Plus.';$SqlConfigError.Visibility='Visible';return}};$DeliveryOptions.IsEnabled=$false;$StartDeliveryButton.IsEnabled=$false;$CancelDeliveryButton.IsEnabled=$true;$DeliveryProgress.Maximum=$selected.Count;$script:cancelFile=Join-Path ([IO.Path]::GetTempPath())('delivery-copy-'+[Guid]::NewGuid()+'.cancel');$jobItems=@($selected|ForEach-Object {[pscustomobject]@{Included=$_.Included;Source=$_.Source;Relative=$_.Relative;ActualDestination=$null;Size=$_.Size;SizeDisplay=$_.SizeDisplay;Status=$_.Status;StatusBrush=$_.StatusBrush}})
- $script:copyJob=Start-Job -ArgumentList (Join-Path $script:appRoot 'Core.FileOps.ps1'),(Join-Path $script:appRoot 'Core.SqlPlus.ps1'),$jobItems,$dest,$mode,$verify,$run,$script:db.User,$script:db.Tns,$script:db.Log,$script:cancelFile -ScriptBlock {param($fm,$sm,$items,$d,$mode,$verify,$run,$u,$t,$log,$cancel);. $fm;. $sm;$report={param($done,$total,$message)Write-Progress -Activity 'Delivery' -Status $message -PercentComplete ([int](($done/[Math]::Max($total,1))*100))};$stop={Test-Path -LiteralPath $cancel};$result=Copy-DeliveryFiles -Items $items -Destination $d -DuplicateMode $mode -VerifyHash $verify -ReportProgress $report -IsCancelled $stop;if($run -and -not $result.Cancelled){$result|Add-Member NoteProperty RunScriptPath (New-DeliveryRunScript -Items $items -Destination $d -DbUser $u -TnsName $t -LogFile $log)};$result}
- $script:copyTimer=New-Object Windows.Threading.DispatcherTimer
- $script:copyTimer.Interval=[TimeSpan]::FromMilliseconds(200)
- $script:copyTimer.Add_Tick({
-  $p=@($script:copyJob.ChildJobs[0].Progress|Select-Object -Last 1)
-  if($p.Count){$DeliveryProgress.Value=[Math]::Round(($p[0].PercentComplete/100)*$DeliveryProgress.Maximum);$DeliveryStatus.Text=$p[0].StatusDescription;Set-Status "Delivering $([int]$DeliveryProgress.Value)/$([int]$DeliveryProgress.Maximum) file"}
-  if($script:copyJob.State -notin @('Completed','Failed','Stopped')){return}
-  $script:copyTimer.Stop();$DeliveryOptions.IsEnabled=$true;$StartDeliveryButton.IsEnabled=$true;$CancelDeliveryButton.IsEnabled=$false
-  if($script:copyJob.State -ne 'Completed'){$DeliveryStatus.Text='Delivery failed.';Set-Status 'Delivery failed.' '#B42318';return}
-  $result=@(Receive-Job $script:copyJob|Select-Object -Last 1)[0];Remove-Job $script:copyJob -Force
-  if(Test-Path $script:cancelFile){Remove-Item $script:cancelFile -Force}
-  $map=@{};foreach($x in $result.Items){$map[$x.Source]=$x};foreach($item in $script:items){if($map.ContainsKey($item.Source)){$item.ActualDestination=$map[$item.Source].ActualDestination;$item.Status=Convert-UiStatus $map[$item.Source].Status;$item.StatusBrush=$map[$item.Source].StatusBrush}}
-  Update-Ui;$m=Import-Csv $result.ManifestPath;$copied=@($m|Where-Object Result -eq 'Copied').Count;$skipped=@($m|Where-Object Result -eq 'Skipped').Count;$failed=@($m|Where-Object {$_.Result -eq 'Failed'}).Count
-  $ResultTitle.Text=if($failed){'Delivery completed with errors'}elseif($result.Cancelled){'Delivery cancelled'}else{'Delivery completed'}
-  $resultColor=if($failed){'#B42318'}elseif($result.Cancelled){'#A96500'}else{'#16794A'}
-  $ResultTitle.Foreground=[Windows.Media.BrushConverter]::new().ConvertFromString($resultColor)
-  $ResultSummary.Text="$copied copied | $skipped skipped | $failed failed";$script:manifestPath=$result.ManifestPath;$ResultPanel.Visibility='Visible';$OpenDestinationButton.IsEnabled=$true;$ReviewErrorsButton.Visibility=if($failed){'Visible'}else{'Collapsed'};Set-Status $ResultTitle.Text $resultColor
- })
- $script:copyTimer.Start()
+    $selected=@(Get-SelectedItems);$destinationRoot=$DestinationPath.Text.Trim()
+    if(-not $destinationRoot){$DestinationError.Text='Choose a destination folder.';$DestinationError.Visibility='Visible';return}
+    $branchFolder=ConvertTo-DeliveryBranchFolderName $CompareBranch.Text
+    $dest=if($branchFolder){Join-Path $destinationRoot $branchFolder}else{$destinationRoot}
+    if(-not(Test-Path -LiteralPath $destinationRoot -PathType Container)){
+        if([Windows.MessageBox]::Show("The destination folder does not exist:`n$destinationRoot`n`nCreate it and continue?",'Create destination folder',[Windows.MessageBoxButton]::YesNo,[Windows.MessageBoxImage]::Warning) -ne 'Yes'){return}
+    }
+    if(-not(Test-Path -LiteralPath $dest -PathType Container)){
+        try{New-Item -ItemType Directory -Path $dest -Force -ErrorAction Stop|Out-Null}catch{$DestinationError.Text=('Could not create delivery folder: '+$_.Exception.Message);$DestinationError.Visibility='Visible';return}
+    }
+    $DestinationError.Visibility='Collapsed';Update-DestinationState
+    $mode=@('Skip','Overwrite','Rename automatically')[$DuplicateMode.SelectedIndex]
+    if($mode -eq 'Overwrite'){
+        $count=@($selected|Where-Object {Test-Path -LiteralPath (Join-Path $dest $_.Relative)}).Count
+        if($count -and [Windows.MessageBox]::Show("There are $count existing destination files. Overwrite them?",'Confirm overwrite',[Windows.MessageBoxButton]::YesNo,[Windows.MessageBoxImage]::Warning) -ne 'Yes'){return}
+    }
+    $verify=[bool]$VerifyHash.IsChecked
+    $run=[bool]$CreateRunScript.IsChecked
+    $writeManifest=$false
+    $SqlConfigError.Visibility='Collapsed'
+    if($run){
+        $missing=@()
+        if(-not $script:db.User.Trim()){$missing+='DB user'}
+        if(-not $script:db.Tns.Trim()){$missing+='TNS name'}
+        if($missing.Count){$SqlConfigError.Text='DB configuration is missing: '+($missing -join ', ')+'. Click Configure DB credentials.';$SqlConfigError.Visibility='Visible';return}
+    }
+    $script:deliveryPath=$dest
+    $DeliveryOptions.IsEnabled=$false;$StartDeliveryButton.IsEnabled=$false;$CancelDeliveryButton.IsEnabled=$true
+    $DeliveryProgress.Maximum=$selected.Count
+    $script:cancelFile=Join-Path ([IO.Path]::GetTempPath())('delivery-copy-'+[Guid]::NewGuid()+'.cancel')
+    $jobItems=@($selected|ForEach-Object {[pscustomobject]@{Included=$_.Included;Source=$_.Source;Relative=$_.Relative;ActualDestination=$null;Size=$_.Size;SizeDisplay=$_.SizeDisplay;Status=$_.Status;StatusBrush=$_.StatusBrush}})
+    $prof=$script:currentProfile
+    $u=$script:db.User;$p=$script:db.Password;$t=$script:db.Tns;$log=$script:db.Log
+
+    $script:copyJob=Start-Job -ArgumentList (Join-Path $script:appRoot 'Core.FileOps.ps1'),(Join-Path $script:appRoot 'Core.SqlPlus.ps1'),$jobItems,$dest,$mode,$verify,$writeManifest,$run,$prof,$u,$p,$t,$log,$script:cancelFile -ScriptBlock {
+        param($fm,$sm,$items,$d,$mode,$verify,$writeManifest,$run,$prof,$u,$p,$t,$log,$cancel)
+        . $fm;. $sm
+        $report={param($done,$total,$message)Write-Progress -Activity 'Delivery' -Status $message -PercentComplete ([int](($done/[Math]::Max($total,1))*100))}
+        $stop={Test-Path -LiteralPath $cancel}
+        $result=Copy-DeliveryFiles -Items $items -Destination $d -DuplicateMode $mode -VerifyHash $verify -WriteManifest $writeManifest -ReportProgress $report -IsCancelled $stop
+        if($run -and -not $result.Cancelled){
+            $result|Add-Member NoteProperty RunScriptPath (New-DeliveryRunScript -Items $items -Destination $d -DbUser $u -DbPass $p -TnsName $t -LogFile $log -Profile $prof)
+        }
+        $result
+    }
+
+    $script:copyTimer=New-Object Windows.Threading.DispatcherTimer
+    $script:copyTimer.Interval=[TimeSpan]::FromMilliseconds(200)
+    $script:copyTimer.Add_Tick({
+        $p=@($script:copyJob.ChildJobs[0].Progress|Select-Object -Last 1)
+        if($p.Count){
+            $DeliveryProgress.Value=[Math]::Round(($p[0].PercentComplete/100)*$DeliveryProgress.Maximum)
+            $DeliveryStatus.Text=$p[0].StatusDescription
+            Set-Status "Delivering $([int]$DeliveryProgress.Value)/$([int]$DeliveryProgress.Maximum) files"
+        }
+        if($script:copyJob.State -notin @('Completed','Failed','Stopped')){return}
+        $script:copyTimer.Stop()
+        $DeliveryOptions.IsEnabled=$true;$StartDeliveryButton.IsEnabled=$true;$CancelDeliveryButton.IsEnabled=$false
+        if($script:copyJob.State -ne 'Completed'){
+            $DeliveryStatus.Text='Delivery failed.';Set-Status 'Delivery failed.' '#B42318'
+            return
+        }
+        $result=@(Receive-Job $script:copyJob|Select-Object -Last 1)[0]
+        Remove-Job $script:copyJob -Force
+        if(Test-Path $script:cancelFile){Remove-Item $script:cancelFile -Force}
+
+        $map=@{}
+        foreach($x in $result.Items){$map[$x.Source]=$x}
+        foreach($item in $script:items){
+            if($map.ContainsKey($item.Source)){
+                $item.ActualDestination=$map[$item.Source].ActualDestination
+                $item.Status=Convert-UiStatus $map[$item.Source].Status
+                $item.StatusBrush=$map[$item.Source].StatusBrush
+            }
+        }
+        Update-Ui
+        $copied=$result.CopiedCount
+        $skipped=$result.SkippedCount
+        $failed=$result.FailedCount
+        $ResultTitle.Text=if($failed){'Delivery completed with errors'}elseif($result.Cancelled){'Delivery cancelled'}else{'Delivery completed'}
+        $resultColor=if($failed){'#B42318'}elseif($result.Cancelled){'#A96500'}else{'#16794A'}
+        $ResultTitle.Foreground=[Windows.Media.BrushConverter]::new().ConvertFromString($resultColor)
+        $extraMsg=if($result.PSObject.Properties['RunScriptPath'] -and $result.RunScriptPath){if($script:currentProfile -eq 'BVSC'){" (BVSC scripts generated)"}else{" (runscript.txt generated with local repository paths)"}}else{''}
+        $ResultSummary.Text="$copied copied | $skipped skipped | $failed failed$extraMsg"
+        $script:manifestPath=$result.ManifestPath
+        $ResultPanel.Visibility='Visible'
+        $OpenDestinationButton.IsEnabled=$true
+        $OpenManifestButton.IsEnabled=$false
+        $ReviewErrorsButton.Visibility=if($failed){'Visible'}else{'Collapsed'}
+        Set-Status $ResultTitle.Text $resultColor
+    })
+    $script:copyTimer.Start()
 }
-$ChooseFilesButton.Add_Click({$d=New-Object Windows.Forms.OpenFileDialog;$d.Multiselect=$true;if($d.ShowDialog() -eq 'OK'){$r=Add-DirectPaths @($d.FileNames);$CollectHint.Text=('Added '+(Format-FileCount $r.Added)+'.');Set-Status ('Added '+(Format-FileCount $r.Added)) '#16794A';if($r.Added){Set-Step 2}}})
-$ChooseFolderButton.Add_Click({$d=New-Object Windows.Forms.FolderBrowserDialog;if($d.ShowDialog() -eq 'OK'){Start-FolderScan @($d.SelectedPath)}})
+
+$ProjectProfileCombo.Add_SelectionChanged({
+    $p = if ($ProjectProfileCombo.SelectedIndex -eq 0) { 'BVSC' } else { 'BSC' }
+    if ($p -ne $script:currentProfile) {
+        Set-DeliveryProfile $p
+        Set-Status "Switched to $p profile" '#16794A'
+    }
+})
+
 $AddPathsButton.Add_Click({Add-PastedPaths})
-$ChooseRepoButton.Add_Click({$d=New-Object Windows.Forms.FolderBrowserDialog;if($d.ShowDialog() -eq 'OK'){$RepoPath.Text=$d.SelectedPath;$GitHint.Text='Load branches to choose a base and compare branch.'}})
-$LoadBranchesButton.Add_Click({$LoadBranchesButton.IsEnabled=$false;$AddGitChangesButton.IsEnabled=$false;try{$repo=Get-DeliveryGitRoot $RepoPath.Text;$RepoPath.Text=$repo;$branches=@(Get-DeliveryGitBranches $repo);$BaseBranch.ItemsSource=$branches;$CompareBranch.ItemsSource=$branches;$BaseBranch.IsEnabled=$true;$CompareBranch.IsEnabled=$true;$current=@(Invoke-DeliveryGit $repo @('branch','--show-current'))[0];$base=if($branches -contains 'main'){'main'}elseif($branches -contains 'master'){'master'}else{$current};$BaseBranch.SelectedItem=$base;$CompareBranch.SelectedItem=$current;$BaseBranch.Text=$base;$CompareBranch.Text=$current;$AddGitChangesButton.IsEnabled=$true;$GitHint.Text="Loaded $($branches.Count) branches. Ready to compare."}catch{$GitHint.Text=('Could not load branches: '+$_.Exception.Message.Replace([Environment]::NewLine,' '))}finally{$LoadBranchesButton.IsEnabled=$true}})
-$AddGitChangesButton.Add_Click({$AddGitChangesButton.IsEnabled=$false;try{$repo=Get-DeliveryGitRoot $RepoPath.Text;$base=$BaseBranch.Text.Trim();$compare=$CompareBranch.Text.Trim();if(-not $base -or -not $compare){throw 'Choose both branches first.'};$GitHint.Text='Refreshing remote branches and comparing the latest revisions...';$c=Get-DeliveryGitChanges -Repository $repo -BaseBranch $base -CompareBranch $compare -IncludeWorkspace ([bool]$IncludeWorkspace.IsChecked) -SyncRemote $true;$files=@($c.Changes.Keys|Where-Object {Test-Path $_ -PathType Leaf}|ForEach-Object {Get-Item $_});$r=Add-Items -Files $files -GitStatus $c.Changes;$sqlCount=@($files|Where-Object {[IO.Path]::GetExtension($_.FullName).Equals('.sql',[StringComparison]::OrdinalIgnoreCase)}).Count;Set-Status ('Added '+(Format-FileCount $r.Added)+' from Git') '#16794A';$GitHint.Text="Compared latest remote revisions. SQL files: $sqlCount. Review package paths and order before delivery.";if($r.Added){Set-Step 2}}catch{$GitHint.Text=('Could not compare changes: '+$_.Exception.Message.Replace([Environment]::NewLine,' '))}finally{$AddGitChangesButton.IsEnabled=$true}})
+
+$ChooseRepoButton.Add_Click({
+    $d=New-Object Windows.Forms.FolderBrowserDialog
+    if($d.ShowDialog() -eq 'OK'){
+        $RepoPath.Text=$d.SelectedPath
+        $GitHint.Text='Load branches to choose a base and compare branch.'
+    }
+})
+
+$LoadBranchesButton.Add_Click({
+    $LoadBranchesButton.IsEnabled=$false;$AddGitChangesButton.IsEnabled=$false
+    try {
+        $repo=Get-DeliveryGitRoot $RepoPath.Text
+        $RepoPath.Text=$repo
+        $branches=@(Get-DeliveryGitBranches $repo)
+        $BaseBranch.ItemsSource=$branches
+        $CompareBranch.ItemsSource=$branches
+        $BaseBranch.IsEnabled=$true
+        $CompareBranch.IsEnabled=$true
+        $current=@(Invoke-DeliveryGit $repo @('branch','--show-current'))[0]
+        $base=if($branches -contains 'main'){'main'}elseif($branches -contains 'master'){'master'}else{$current}
+        $BaseBranch.SelectedItem=$base
+        $CompareBranch.SelectedItem=$current
+        $BaseBranch.Text=$base
+        $CompareBranch.Text=$current
+        $AddGitChangesButton.IsEnabled=$true
+        $GitHint.Text="Loaded $($branches.Count) branches. Ready to compare."
+    } catch {
+        $GitHint.Text=('Could not load branches: '+$_.Exception.Message.Replace([Environment]::NewLine,' '))
+    } finally {
+        $LoadBranchesButton.IsEnabled=$true
+    }
+})
+
+$AddGitChangesButton.Add_Click({
+    $AddGitChangesButton.IsEnabled=$false
+    try {
+        $repo=Get-DeliveryGitRoot $RepoPath.Text
+        $base=$BaseBranch.Text.Trim()
+        $compare=$CompareBranch.Text.Trim()
+        if(-not $base -or -not $compare){throw 'Choose both branches first.'}
+        
+        $doCheckoutAndPull=[bool]$AutoCheckoutAndPull.IsChecked
+        if($doCheckoutAndPull){
+            $GitHint.Text="Checking out and pulling branch '$compare' to local..."
+            Set-Status "Pulling $compare..."
+            $window.Dispatcher.Invoke([Action]{}, [Windows.Threading.DispatcherPriority]::Background)
+            [void](Invoke-DeliveryGitCheckoutAndPull -Repository $repo -BranchName $compare)
+        }
+
+        $GitHint.Text='Comparing branches and collecting changed files...'
+        $c=Get-DeliveryGitChanges -Repository $repo -BaseBranch $base -CompareBranch $compare -IncludeWorkspace ([bool]$IncludeWorkspace.IsChecked) -SyncRemote (-not $doCheckoutAndPull)
+        $files=@($c.Changes.Keys|Where-Object {Test-Path $_ -PathType Leaf}|ForEach-Object {Get-Item $_})
+        $r=Add-Items -Files $files -GitStatus $c.Changes -SourceRoot $repo
+        $sqlCount=@($files|Where-Object {[IO.Path]::GetExtension($_.FullName).Equals('.sql',[StringComparison]::OrdinalIgnoreCase)}).Count
+        
+        Sort-ReviewItemsFlexDb
+        
+        $statusMsg = if ($doCheckoutAndPull) { "Pulled '$compare' & added $(Format-FileCount $r.Added)" } else { "Added $(Format-FileCount $r.Added) from Git" }
+        Set-Status $statusMsg '#16794A'
+        $GitHint.Text="Compared revisions. Local files on branch '$compare' are up to date. SQL files: $sqlCount."
+        if($r.Added){Set-Step 2}
+    } catch {
+        $GitHint.Text=('Could not compare changes: '+$_.Exception.Message.Replace([Environment]::NewLine,' '))
+        Set-Status 'Git comparison failed' '#B42318'
+    } finally {
+        $AddGitChangesButton.IsEnabled=$true
+    }
+})
+
 $script:searchTimer.Add_Tick({$script:searchTimer.Stop();Refresh-Grid})
 $SearchBox.Add_TextChanged({$script:searchTimer.Stop();$script:searchTimer.Start()})
 $script:destinationTimer.Add_Tick({$script:destinationTimer.Stop();Update-DestinationState})
@@ -112,10 +534,59 @@ $DestinationPath.Add_TextChanged({$script:destinationTimer.Stop();$script:destin
 $FilterBox.Add_SelectionChanged({Refresh-Grid})
 $FileGrid.Add_CellEditEnding({$window.Dispatcher.BeginInvoke([Action]{Update-Ui $false},[Windows.Threading.DispatcherPriority]::Background)|Out-Null})
 $FileGrid.Add_PreviewMouseLeftButtonUp({$window.Dispatcher.BeginInvoke([Action]{Update-Ui $false},[Windows.Threading.DispatcherPriority]::Background)|Out-Null})
-$ToggleFilteredButton.Add_Click({$targets=@($script:viewItems);if($targets.Count -gt 100 -and [Windows.MessageBox]::Show("Change selection for $($targets.Count) filtered files?",'Confirm',[Windows.MessageBoxButton]::YesNo) -ne 'Yes'){return};$check=@($targets|Where-Object {-not $_.Included}).Count -gt 0;foreach($i in $targets){$i.Included=$check};Update-Ui})
-$SelectAllButton.Add_Click({foreach($i in $script:items){$i.Included=$true};Update-Ui});$ClearSelectionButton.Add_Click({foreach($i in $script:items){$i.Included=$false};Update-Ui})
-$SortAscendingButton.Add_Click({Sort-ReviewItems $false});$SortDescendingButton.Add_Click({Sort-ReviewItems $true})
-$RemoveSelectedButton.Add_Click({$targets=@($script:items|Where-Object Included);if(-not $targets.Count){return};if([Windows.MessageBox]::Show("Remove $($targets.Count) files from the list? Original files are not deleted.",'Confirm removal',[Windows.MessageBoxButton]::YesNo,[Windows.MessageBoxImage]::Warning) -ne 'Yes'){return};foreach($i in $targets){$script:knownSources.Remove($i.Source)|Out-Null;$script:items.Remove($i)};Update-Ui})
-$Step1Button.Add_Click({Set-Step 1});$Step2Button.Add_Click({if($Step2Button.IsEnabled){Set-Step 2}});$Step3Button.Add_Click({if($Step3Button.IsEnabled){Set-Step 3}});$ContinueButton.Add_Click({if($Step3Button.IsEnabled){Set-Step 3}});$BackToReviewButton.Add_Click({Set-Step 2})
-$ChooseDestinationButton.Add_Click({$d=New-Object Windows.Forms.FolderBrowserDialog;if($d.ShowDialog() -eq 'OK'){$DestinationPath.Text=$d.SelectedPath;$DestinationError.Visibility='Collapsed';Update-DestinationState}});$DestinationPath.Add_LostKeyboardFocus({Update-DestinationState});$ConfigureSqlButton.Add_Click({Show-SqlDialog});$CreateRunScript.Add_Checked({$SqlSettingsLine.Visibility='Visible'});$CreateRunScript.Add_Unchecked({$SqlSettingsLine.Visibility='Collapsed'});$StartDeliveryButton.Add_Click({Start-Delivery});$CancelDeliveryButton.Add_Click({if($script:copyJob){New-Item -ItemType File -Path $script:cancelFile -Force|Out-Null;$CancelDeliveryButton.IsEnabled=$false;$DeliveryStatus.Text='Cancelling after the current file...'}});$OpenDestinationButton.Add_Click({if(Test-Path $DestinationPath.Text){Start-Process explorer.exe -ArgumentList ('"'+$DestinationPath.Text+'"')}});$OpenManifestButton.Add_Click({if(Test-Path $script:manifestPath){Start-Process $script:manifestPath}});$ReviewErrorsButton.Add_Click({$FilterBox.SelectedIndex=4;Set-Step 2})
-Update-Ui;Set-Step 1;if(-not $NoShow){[void]$window.ShowDialog()}
+$ToggleFilteredButton.Add_Click({
+    $targets=@($script:viewItems)
+    if($targets.Count -gt 100 -and [Windows.MessageBox]::Show("Change selection for $($targets.Count) filtered files?",'Confirm',[Windows.MessageBoxButton]::YesNo) -ne 'Yes'){return}
+    $check=@($targets|Where-Object {-not $_.Included}).Count -gt 0
+    foreach($i in $targets){$i.Included=$check}
+    Update-Ui
+})
+$SelectAllButton.Add_Click({foreach($i in $script:items){$i.Included=$true};Update-Ui})
+$ClearSelectionButton.Add_Click({foreach($i in $script:items){$i.Included=$false};Update-Ui})
+$SortAscendingButton.Add_Click({Sort-ReviewItems $false})
+$SortDescendingButton.Add_Click({Sort-ReviewItems $true})
+$SortSqlFlexButton.Add_Click({Sort-ReviewItemsFlexDb})
+$RemoveSelectedButton.Add_Click({
+    $targets=@($script:items|Where-Object Included)
+    if(-not $targets.Count){return}
+    if([Windows.MessageBox]::Show("Remove $($targets.Count) files from the list? Original files are not deleted.",'Confirm removal',[Windows.MessageBoxButton]::YesNo,[Windows.MessageBoxImage]::Warning) -ne 'Yes'){return}
+    foreach($i in $targets){$script:knownSources.Remove($i.Source)|Out-Null;$script:items.Remove($i)}
+    Update-Ui
+})
+$Step1Button.Add_Click({Set-Step 1})
+$Step2Button.Add_Click({if($Step2Button.IsEnabled){Set-Step 2}})
+$Step3Button.Add_Click({if($Step3Button.IsEnabled){Set-Step 3}})
+$ContinueButton.Add_Click({if($Step3Button.IsEnabled){Set-Step 3}})
+$BackToReviewButton.Add_Click({Set-Step 2})
+$ChooseDestinationButton.Add_Click({
+    $d=New-Object Windows.Forms.FolderBrowserDialog
+    if($d.ShowDialog() -eq 'OK'){
+        $DestinationPath.Text=$d.SelectedPath
+        $DestinationError.Visibility='Collapsed'
+        Update-DestinationState
+    }
+})
+$DestinationPath.Add_LostKeyboardFocus({Update-DestinationState})
+$CompareBranch.Add_SelectionChanged({Update-DestinationState})
+$CompareBranch.Add_LostKeyboardFocus({Update-DestinationState})
+$ConfigureSqlButton.Add_Click({Show-SqlDialog})
+$CreateRunScript.Add_Checked({$SqlSettingsLine.Visibility='Visible'})
+$CreateRunScript.Add_Unchecked({$SqlSettingsLine.Visibility='Collapsed'})
+$StartDeliveryButton.Add_Click({Start-Delivery})
+$CancelDeliveryButton.Add_Click({
+    if($script:copyJob){
+        New-Item -ItemType File -Path $script:cancelFile -Force|Out-Null
+        $CancelDeliveryButton.IsEnabled=$false
+        $DeliveryStatus.Text='Cancelling after the current file...'
+    }
+})
+$OpenDestinationButton.Add_Click({$path=if($script:deliveryPath){$script:deliveryPath}else{$DestinationPath.Text};if(Test-Path $path){Start-Process explorer.exe -ArgumentList ('"'+$path+'"')}})
+$OpenManifestButton.Add_Click({if(Test-Path $script:manifestPath){Start-Process $script:manifestPath}})
+$ReviewErrorsButton.Add_Click({$FilterBox.SelectedIndex=4;Set-Step 2})
+
+Set-DeliveryProfile 'BSC'
+Set-Step 1
+if(-not $NoShow){
+    Show-StartupProfileDialog
+    [void]$window.ShowDialog()
+}
