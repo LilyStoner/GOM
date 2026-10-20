@@ -11,21 +11,92 @@ function Test-DeliveryExcludedPath {
 }
 
 function Get-DeliveryRelativePath {
-    param([Parameter(Mandatory)][string]$Source,[Parameter(Mandatory)][string]$Path,[bool]$PreserveStructure = $true)
-    if (-not $PreserveStructure -or -not (Test-Path -LiteralPath $Source -PathType Container)) { return [IO.Path]::GetFileName($Path) }
+    param(
+        [Parameter(Mandatory)][string]$Source,
+        [Parameter(Mandatory)][string]$Path,
+        [bool]$PreserveStructure = $true,
+        [string]$Profile = 'BVSC'
+    )
+    if (-not $PreserveStructure -or -not (Test-Path -LiteralPath $Source -PathType Container)) {
+        return [IO.Path]::GetFileName($Path)
+    }
     $root = [IO.Path]::GetFullPath($Source).TrimEnd('\') + '\'
     $full = [IO.Path]::GetFullPath($Path)
-    if ($full.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { return $full.Substring($root.Length) }
-    return [IO.Path]::GetFileName($full)
+    $rel = if ($full.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) {
+        $full.Substring($root.Length)
+    } else {
+        [IO.Path]::GetFileName($full)
+    }
+
+    $normalized = $rel.Replace('/', '\')
+
+    # Strip repository folder wrappers like flexDB\ if present
+    if ($normalized -match '^(?:.*\\)?flexDB\\(?<afterFlex>.*)$') {
+        $normalized = $Matches['afterFlex']
+    }
+
+    if ($Profile -eq 'BVSC') {
+        # BVSC rule: files in 2.HOST map to 2.HOST\upgrade\sql\2.HOST\...
+        if ($normalized -match '^(?:.*\\)?2\.HOST\\(?<subHost>.*)$') {
+            $sub = $Matches['subHost']
+            if ($sub -notmatch '^upgrade\\sql\\') {
+                return "2.HOST\upgrade\sql\2.HOST\$sub"
+            }
+            return "2.HOST\$sub"
+        }
+        return $normalized
+    } else {
+        # Standard / BSC rule: preserve repository structure like 1.BDSHOST, 2.HOST, 3.Service
+        return $normalized
+    }
+}
+
+function Get-DeliverySqlPriority {
+    param([Parameter(Mandatory)][string]$Path)
+    $p = $Path.Replace('\', '/').ToLowerInvariant()
+    if ($p -match '1\.bdshost') { return 10 }
+    if ($p -match '0\.changescripts') { return 20 }
+    if ($p -match '1\.view') { return 30 }
+    if ($p -match '2\.trigger') { return 40 }
+    if ($p -match '3\.procedure') { return 50 }
+    if ($p -match '4\.function') { return 60 }
+    if ($p -match '5\.package') { return 70 }
+    if ($p -match '7\.parameters') {
+        if ($p -match 'allcode') { return 81 }
+        if ($p -match 'apprvrqd') { return 82 }
+        if ($p -match 'appmodules') { return 83 }
+        if ($p -match 'deferror') { return 84 }
+        if ($p -match 'filemap') { return 85 }
+        if ($p -match 'filemaster') { return 86 }
+        if ($p -match 'focore') { return 87 }
+        if ($p -match 'master_trans') { return 88 }
+        if ($p -match 'rptfields') { return 89 }
+        if ($p -match 'rptmaster') { return 90 }
+        if ($p -match 'search_searchfld') { return 91 }
+        if ($p -match 'sysvar') { return 92 }
+        if ($p -match 'tblbackup') { return 93 }
+        return 80
+    }
+    if ($p -match 'version\.sql') { return 98 }
+    return 95
 }
 
 function New-DeliveryItem {
-    param([Parameter(Mandatory)]$File,[Parameter(Mandatory)][string]$Source,[bool]$PreserveStructure,[string]$GitStatus)
+    param(
+        [Parameter(Mandatory)]$File,
+        [Parameter(Mandatory)][string]$Source,
+        [bool]$PreserveStructure = $true,
+        [string]$GitStatus = $null,
+        [string]$Profile = 'BVSC'
+    )
     $status = if ($GitStatus) { "Git $GitStatus" } else { 'Ready' }
+    $rel = Get-DeliveryRelativePath -Source $Source -Path $File.FullName -PreserveStructure $PreserveStructure -Profile $Profile
     [pscustomobject]@{
         Included = $true
         Source = $File.FullName
-        Relative = Get-DeliveryRelativePath $Source $File.FullName $PreserveStructure
+        SourceRoot = $Source
+        PreserveStructure = $PreserveStructure
+        Relative = $rel
         ActualDestination = $null
         Size = [long]$File.Length
         SizeDisplay = Format-DeliverySize $File.Length
@@ -64,17 +135,30 @@ function Get-DeliveryNextName {
     for ($i = 1; ; $i++) { $candidate = Join-Path $directory "$name ($i)$extension"; if (-not (Test-Path -LiteralPath $candidate)) { return $candidate } }
 }
 
+function ConvertTo-DeliveryBranchFolderName {
+    param([string]$BranchName)
+    if ([string]::IsNullOrWhiteSpace($BranchName)) { return $null }
+
+    # Git branch names may contain '/', while Windows folder names cannot.
+    $folderName = $BranchName.Trim() -replace '[\\/:*?"<>|]+', '-'
+    $folderName = $folderName.Trim().TrimEnd('.')
+    if ([string]::IsNullOrWhiteSpace($folderName)) { return 'delivery' }
+    return $folderName
+}
+
 function Copy-DeliveryFiles {
     param(
         [Parameter(Mandatory)][object[]]$Items,
         [Parameter(Mandatory)][string]$Destination,
         [ValidateSet('Skip','Overwrite','Rename automatically')][string]$DuplicateMode = 'Skip',
         [bool]$VerifyHash,
+        [bool]$WriteManifest = $false,
         [scriptblock]$ReportProgress,
         [scriptblock]$IsCancelled
     )
     New-Item -ItemType Directory -Path $Destination -Force | Out-Null
     $manifest = New-Object System.Collections.Generic.List[object]
+    $manifestPath = $null
     try {
         for ($index = 0; $index -lt $Items.Count; $index++) {
             if (& $IsCancelled) { break }
@@ -103,9 +187,21 @@ function Copy-DeliveryFiles {
             } finally { & $ReportProgress ($index+1) $Items.Count $item.Status }
         }
     } finally {
-        $stamp=Get-Date -Format 'yyyyMMdd_HHmmss'
-        $manifestPath=Join-Path $Destination "delivery_manifest_$stamp.csv"
-        $manifest | Export-Csv -LiteralPath $manifestPath -NoTypeInformation -Encoding UTF8
+        if ($WriteManifest) {
+            $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
+            $manifestPath = Join-Path $Destination "delivery_manifest_$stamp.csv"
+            $manifest | Export-Csv -LiteralPath $manifestPath -NoTypeInformation -Encoding UTF8
+        }
     }
-    return [pscustomobject]@{ ManifestPath=$manifestPath; Cancelled=(& $IsCancelled); Items=$Items }
+    $copiedCount  = @($manifest | Where-Object Result -eq 'Copied').Count
+    $skippedCount = @($manifest | Where-Object Result -eq 'Skipped').Count
+    $failedCount  = @($manifest | Where-Object { $_.Result -eq 'Failed' }).Count
+    return [pscustomobject]@{
+        ManifestPath = $manifestPath
+        Cancelled    = (& $IsCancelled)
+        Items        = $Items
+        CopiedCount  = $copiedCount
+        SkippedCount = $skippedCount
+        FailedCount  = $failedCount
+    }
 }

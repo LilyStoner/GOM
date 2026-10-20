@@ -38,8 +38,7 @@ try {
     $output = Join-Path $temp 'delivery'
     $result = Copy-DeliveryFiles -Items @($item) -Destination $output -DuplicateMode Skip -VerifyHash $true -ReportProgress {param($done,$total,$message)} -IsCancelled {$false}
     if ($result.Items[0].Status -ne 'Copied and verified') { throw 'Copy or SHA-256 verification failed.' }
-    if (-not (Test-Path -LiteralPath $result.ManifestPath -PathType Leaf)) { throw 'The delivery manifest was not saved.' }
-    if (@(Import-Csv -LiteralPath $result.ManifestPath).Count -ne 1) { throw 'The manifest must contain the copied file.' }
+    if ($result.ManifestPath) { throw 'The delivery manifest must not be created.' }
 }
 finally {
     if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force }
