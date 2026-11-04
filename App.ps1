@@ -102,8 +102,10 @@ $script:lastStatusText='Ready'
 $script:items=New-Object 'System.Collections.ObjectModel.ObservableCollection[object]'
 $script:viewItems=New-Object 'System.Collections.ObjectModel.ObservableCollection[object]'
 $script:knownSources=New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
-$script:db=[pscustomobject]@{User='HOSTBVSFUND';Password='HOST';Tns='FLEX_236';Log='../log/install.log'}
+$script:db=[pscustomobject]@{User='HOSTBVSFUND';Password='HOST';Tns='FLEX_236';Log='D:/log.txt'}
 $script:sqlDefaultApplied=$false
+$script:allBranches=@()
+$script:isFilteringBranches=$false
 $script:searchTimer=New-Object Windows.Threading.DispatcherTimer;$script:searchTimer.Interval=[TimeSpan]::FromMilliseconds(300)
 $script:destinationTimer=New-Object Windows.Threading.DispatcherTimer;$script:destinationTimer.Interval=[TimeSpan]::FromMilliseconds(350)
 
@@ -304,6 +306,47 @@ function Refresh-Grid {
     $FileGrid.Items.Refresh()
 }
 
+function Update-BranchSuggestions {
+    param([Parameter(Mandatory)][Windows.Controls.ComboBox]$Combo)
+    if($script:isFilteringBranches){return}
+    $query=$Combo.Text.Trim()
+    $matches=if([string]::IsNullOrWhiteSpace($query)){
+        @($script:allBranches)
+    }else{
+        @($script:allBranches | Where-Object { $_.IndexOf($query,[StringComparison]::OrdinalIgnoreCase) -ge 0 })
+    }
+    # Master-related branches are operationally important, so keep every
+    # branch containing "master" visible even while the user types a filter.
+    $masterRelated=@($script:allBranches | Where-Object { $_.IndexOf('master',[StringComparison]::OrdinalIgnoreCase) -ge 0 })
+    if($masterRelated.Count){
+        $matches=@($masterRelated + $matches)
+        # Remove duplicated entries while preserving the master-related branches first.
+        $seen=New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+        $matches=@($matches | Where-Object { $seen.Add($_) })
+    }
+    $script:isFilteringBranches=$true
+    try {
+        [void]($Combo.ItemsSource=$matches)
+        [void]($Combo.Text=$query)
+        if($Combo.IsKeyboardFocusWithin -and $query){[void]($Combo.IsDropDownOpen=$true)}
+    } finally {
+        $script:isFilteringBranches=$false
+    }
+}
+
+function Enable-BranchTypingSearch {
+    param([Parameter(Mandatory)][Windows.Controls.ComboBox]$Combo)
+    [void]($Combo.IsTextSearchEnabled=$false)
+    [void]($Combo.StaysOpenOnEdit=$true)
+    [void]$Combo.ApplyTemplate()
+    $editor=$Combo.Template.FindName('PART_EditableTextBox',$Combo)
+    if($editor -and -not ($editor.Tag -is [Windows.Controls.ComboBox])){
+        [void]($editor.Tag=$Combo)
+        $editor.Add_TextChanged({param($sender,$eventArgs)Update-BranchSuggestions -Combo $sender.Tag})
+        $Combo.Add_DropDownOpened({param($sender,$eventArgs)Update-BranchSuggestions -Combo $sender})
+    }
+}
+
 function Update-DestinationState {
     $root=$DestinationPath.Text.Trim();$selected=@(Get-SelectedItems)
     if(-not $root){$DestinationInfo.Text=Get-LocalizedText 'Choose a destination folder.';$DestinationInfo.Foreground=$window.Resources['ThemeColor_5D6B7E'];$ConflictInfo.Text='';return}
@@ -450,6 +493,205 @@ function Show-SqlDialog {
     [void]$d.ShowDialog()
 }
 
+function Show-RunAllDialog {
+    param(
+        [Parameter(Mandatory)][string]$RunScriptPath,
+        [string]$Profile = 'BVSC',
+        [string]$Dest = ''
+    )
+    $dx = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Run Deployment Scripts" Width="560" Height="460" ResizeMode="NoResize" WindowStartupLocation="CenterOwner"
+    Background="#F5F7FA" Foreground="#28384D" FontFamily="Segoe UI Variable, Segoe UI">
+    <Window.Resources>
+        <Style TargetType="{x:Type Control}"><Setter Property="FocusVisualStyle" Value="{x:Null}"/><Setter Property="Foreground" Value="#28384D"/></Style>
+        <Style TargetType="TextBox"><Setter Property="Background" Value="#FFFFFF"/><Setter Property="BorderBrush" Value="#D7DFE9"/><Setter Property="Foreground" Value="#28384D"/></Style>
+    </Window.Resources>
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="12"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="10"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="10"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="10"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="10"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TextBlock Text="Run Deployment Scripts" FontSize="18" FontWeight="SemiBold"/>
+        <StackPanel Grid.Row="2">
+            <TextBlock Text="Script file (read-only)" Foreground="#5D6B7E" FontSize="11"/>
+            <TextBox x:Name="ScriptPath" Height="34" Margin="0,4,0,0" IsReadOnly="True" Background="#E5E9F0"/>
+        </StackPanel>
+        <StackPanel Grid.Row="4">
+            <TextBlock Text="DB user"/>
+            <TextBox x:Name="User" Height="34" Margin="0,4,0,0" TabIndex="1"/>
+        </StackPanel>
+        <StackPanel Grid.Row="6">
+            <TextBlock Text="Password"/>
+            <TextBox x:Name="Password" Height="34" Margin="0,4,0,0" TabIndex="2"/>
+        </StackPanel>
+        <StackPanel Grid.Row="8">
+            <TextBlock Text="TNS name"/>
+            <TextBox x:Name="Tns" Height="34" Margin="0,4,0,0" TabIndex="3"/>
+        </StackPanel>
+        <TextBlock x:Name="RunError" Grid.Row="10" Foreground="#B42318" Visibility="Collapsed" TextWrapping="Wrap"/>
+        <TextBlock Grid.Row="11" Text="Credentials will be updated in setVariable.bat (BVSC) before running." Foreground="#5D6B7E" FontSize="11" VerticalAlignment="Bottom" Margin="0,8,0,0"/>
+        <StackPanel Grid.Row="12" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="CancelBtn" Content="Cancel" IsCancel="True" Margin="0,0,8,0" Width="80" Height="32"/>
+            <Button x:Name="RunBtn" Content="Run" IsDefault="True" Width="80" Height="32" Background="#1463D6" Foreground="White"/>
+        </StackPanel>
+    </Grid>
+</Window>
+'@
+    $dx = [regex]::Replace($dx,'#([0-9A-Fa-f]{6})','{DynamicResource ThemeColor_$1}')
+    $dx = $dx.Replace('Value="White"','Value="{DynamicResource ThemeColor_FFFFFF}"')
+    [xml]$dx = $dx
+    $d = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $dx))
+    Set-Theme $script:theme $d
+    Set-WindowLanguage $d
+    if ($window.IsVisible) { $d.Owner = $window }
+
+    $uScript = $d.FindName('ScriptPath')
+    $uUser   = $d.FindName('User')
+    $uPass   = $d.FindName('Password')
+    $uTns    = $d.FindName('Tns')
+    $uErr    = $d.FindName('RunError')
+
+    $uScript.Text  = $RunScriptPath
+    $uUser.Text    = $script:db.User
+    $uPass.Text    = $script:db.Password
+    $uTns.Text     = $script:db.Tns
+
+    $d.FindName('RunBtn').Add_Click({
+        $dbUser = $uUser.Text.Trim()
+        $dbPass = $uPass.Text.Trim()
+        $dbTns  = $uTns.Text.Trim()
+        if (-not $dbUser) { $uErr.Text = Get-LocalizedText 'DB user is required.'; $uErr.Visibility = 'Visible'; return }
+        if (-not $dbTns)  { $uErr.Text = Get-LocalizedText 'TNS name is required.'; $uErr.Visibility = 'Visible'; return }
+
+        # Save back to session
+        $script:db.User     = $dbUser
+        $script:db.Password = $dbPass
+        $script:db.Tns      = $dbTns
+        $SqlConfigSummary.Text = Get-LocalizedText ("DB: {0}@{1}" -f $script:db.User,$script:db.Tns)
+
+        try {
+            if ($Profile -eq 'BVSC') {
+                # Update setVariable.bat with the (possibly edited) credentials, then run runUpdate.bat
+                $upgradeDir = Join-Path $Dest '2.HOST\upgrade'
+                $cmdDir     = Join-Path $upgradeDir 'cmd'
+                $setBat     = Join-Path $cmdDir 'setVariable.bat'
+                if (Test-Path -LiteralPath $setBat) {
+                    $setBatContent = @(
+                        "rem database user",
+                        "set HOST_USER=$dbUser",
+                        "set HOST_PASSW_USER=$dbPass",
+                        "set FLEX_TNSNAMES=$dbTns",
+                        ""
+                    )
+                    Set-Content -LiteralPath $setBat -Value $setBatContent -Encoding ASCII
+                }
+                $runBat = Join-Path $cmdDir 'runUpdate.bat'
+                if (-not (Test-Path -LiteralPath $runBat)) {
+                    throw "runUpdate.bat not found: $runBat"
+                }
+                Start-Process -FilePath 'cmd.exe' -ArgumentList "/c `"$runBat`"" -WorkingDirectory $cmdDir
+            } else {
+                # BSC/Other: run sqlplus directly with the runscript
+                $runscript = $RunScriptPath
+                if (-not (Test-Path -LiteralPath $runscript)) {
+                    throw "Script file not found: $runscript"
+                }
+                $scriptDir = Split-Path $runscript -Parent
+                Start-Process -FilePath 'sqlplus' -ArgumentList "$dbUser/$dbPass@$dbTns @`"$runscript`"" -WorkingDirectory $scriptDir
+            }
+            $d.DialogResult = $true
+        } catch {
+            $uErr.Text = "Could not launch: $($_.Exception.Message)"
+            $uErr.Visibility = 'Visible'
+        }
+    })
+    [void]$d.ShowDialog()
+}
+
+function Confirm-RunAllBeforeDelivery {
+    param([string]$Profile = 'BVSC')
+    $dx = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Run All after delivery" Width="540" Height="500" ResizeMode="NoResize" WindowStartupLocation="CenterOwner"
+    Background="#F5F7FA" Foreground="#28384D" FontFamily="Segoe UI Variable, Segoe UI">
+    <Window.Resources>
+        <Style TargetType="{x:Type Control}"><Setter Property="FocusVisualStyle" Value="{x:Null}"/><Setter Property="Foreground" Value="#28384D"/></Style>
+        <Style TargetType="TextBox"><Setter Property="Background" Value="#FFFFFF"/><Setter Property="BorderBrush" Value="#D7DFE9"/><Setter Property="Foreground" Value="#28384D"/></Style>
+    </Window.Resources>
+    <Grid Margin="24">
+        <StackPanel>
+            <TextBlock Text="Run All after delivery" FontSize="18" FontWeight="SemiBold"/>
+            <TextBlock Text="The package will be created first, then its generated deployment script will be started." Margin="0,4,0,16" Foreground="#5D6B7E" TextWrapping="Wrap"/>
+            <TextBlock Text="DB user"/><TextBox x:Name="User" Height="34" Margin="0,4,0,10" TabIndex="1"/>
+            <TextBlock Text="Password"/><TextBox x:Name="Password" Height="34" Margin="0,4,0,10" TabIndex="2"/>
+            <TextBlock Text="TNS name"/><TextBox x:Name="Tns" Height="34" Margin="0,4,0,10" TabIndex="3"/>
+            <TextBlock Text="Spool log path"/><TextBox x:Name="SpoolLog" Height="34" Margin="0,4,0,8" TabIndex="4"/>
+            <TextBlock x:Name="DialogError" Foreground="#B42318" Visibility="Collapsed" TextWrapping="Wrap"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+                <Button x:Name="Cancel" Content="Cancel" IsCancel="True" Margin="0,0,8,0" Width="80" Height="32"/>
+                <Button x:Name="Confirm" Content="Confirm Run All" IsDefault="True" Width="120" Height="32" Background="#1463D6" Foreground="White"/>
+            </StackPanel>
+        </StackPanel>
+    </Grid>
+</Window>
+'@
+    $dx=[regex]::Replace($dx,'#([0-9A-Fa-f]{6})','{DynamicResource ThemeColor_$1}')
+    $dx=$dx.Replace('Value="White"','Value="{DynamicResource ThemeColor_FFFFFF}"')
+    [xml]$dx=$dx
+    $d=[Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $dx))
+    Set-Theme $script:theme $d
+    Set-WindowLanguage $d
+    if($window.IsVisible){$d.Owner=$window}
+
+    $u=$d.FindName('User');$p=$d.FindName('Password');$t=$d.FindName('Tns');$log=$d.FindName('SpoolLog');$err=$d.FindName('DialogError')
+    $u.Text=$script:db.User;$p.Text=$script:db.Password;$t.Text=$script:db.Tns;$log.Text=$script:db.Log
+    $d.FindName('Confirm').Add_Click({
+        if(-not $u.Text.Trim()){$err.Text=Get-LocalizedText 'DB user is required.';$err.Visibility='Visible';return}
+        if(-not $t.Text.Trim()){$err.Text=Get-LocalizedText 'TNS name is required.';$err.Visibility='Visible';return}
+        if(-not $log.Text.Trim()){$err.Text='Spool log path is required.';$err.Visibility='Visible';return}
+        $script:db.User=$u.Text.Trim();$script:db.Password=$p.Text.Trim();$script:db.Tns=$t.Text.Trim();$script:db.Log=$log.Text.Trim()
+        $SqlConfigSummary.Text=Get-LocalizedText ("DB: {0}@{1} | Spool: {2}" -f $script:db.User,$script:db.Tns,$script:db.Log)
+        $d.DialogResult=$true
+    })
+    return ($d.ShowDialog() -eq $true)
+}
+
+function Invoke-RunAll {
+    param(
+        [Parameter(Mandatory)][string]$RunScriptPath,
+        [Parameter(Mandatory)][string]$Profile,
+        [Parameter(Mandatory)][string]$Dest
+    )
+    if($Profile -eq 'BVSC'){
+        $cmdDir=Join-Path $Dest '2.HOST\upgrade\cmd'
+        $setBat=Join-Path $cmdDir 'setVariable.bat'
+        if(-not(Test-Path -LiteralPath $setBat)){throw "setVariable.bat not found: $setBat"}
+        $setBatContent=@('rem database user',"set HOST_USER=$($script:db.User)","set HOST_PASSW_USER=$($script:db.Password)","set FLEX_TNSNAMES=$($script:db.Tns)",'')
+        Set-Content -LiteralPath $setBat -Value $setBatContent -Encoding ASCII
+        $runBat=Join-Path $cmdDir 'runUpdate.bat'
+        if(-not(Test-Path -LiteralPath $runBat)){throw "runUpdate.bat not found: $runBat"}
+        Start-Process -FilePath 'cmd.exe' -ArgumentList @('/k',('call "'+$runBat+'"')) -WorkingDirectory $cmdDir
+        return
+    }
+    if(-not(Test-Path -LiteralPath $RunScriptPath)){throw "Script file not found: $RunScriptPath"}
+    # BSC/Other mirrors the manual flow: SQL*Plus starts without a connection,
+    # then receives the generated runscript on stdin, just as if it were pasted.
+    $sqlPlusCommand='sqlplus /nolog < "'+$RunScriptPath+'"'
+    Start-Process -FilePath 'cmd.exe' -ArgumentList @('/k',$sqlPlusCommand) -WorkingDirectory (Split-Path $RunScriptPath -Parent)
+}
+
 function Start-Delivery {
     $selected=@(Get-SelectedItems);$destinationRoot=$DestinationPath.Text.Trim()
     if(-not $destinationRoot){$DestinationError.Text=Get-LocalizedText 'Choose a destination folder.';$DestinationError.Visibility='Visible';return}
@@ -470,12 +712,21 @@ function Start-Delivery {
     $verify=[bool]$VerifyHash.IsChecked
     $run=[bool]$CreateRunScript.IsChecked
     $writeManifest=$false
+    $script:runAllAfterDelivery=$false
     $SqlConfigError.Visibility='Collapsed'
     if($run){
         $missing=@()
         if(-not $script:db.User.Trim()){$missing+='DB user'}
         if(-not $script:db.Tns.Trim()){$missing+='TNS name'}
         if($missing.Count){$SqlConfigError.Text=Get-LocalizedText ("DB configuration is missing: {0}. Click Configure DB credentials." -f ($missing -join ', '));$SqlConfigError.Visibility='Visible';return}
+    }
+    $hasSql=@($selected|Where-Object {[IO.Path]::GetExtension($_.Relative).Equals('.sql',[StringComparison]::OrdinalIgnoreCase)}).Count -gt 0
+    if($run -and $hasSql){
+        $answer=[Windows.MessageBox]::Show((Get-LocalizedText 'Do you want to run all deployment scripts after delivery?'),(Get-LocalizedText 'Run All'),[Windows.MessageBoxButton]::YesNo,[Windows.MessageBoxImage]::Question)
+        if($answer -eq 'Yes'){
+            if(-not (Confirm-RunAllBeforeDelivery -Profile $script:currentProfile)){return}
+            $script:runAllAfterDelivery=$true
+        }
     }
     $script:deliveryPath=$dest
     $DeliveryOptions.IsEnabled=$false;$StartDeliveryButton.IsEnabled=$false;$CancelDeliveryButton.IsEnabled=$true
@@ -537,12 +788,22 @@ function Start-Delivery {
         $ResultTitle.Foreground=[Windows.Media.BrushConverter]::new().ConvertFromString($resultColor)
         $extraMsg=if($result.PSObject.Properties['RunScriptPath'] -and $result.RunScriptPath){if($script:currentProfile -eq 'BVSC'){" (BVSC scripts generated)"}else{" (runscript.txt generated with local repository paths)"}}else{''}
         $ResultSummary.Text=(Get-LocalizedText ("{0} copied | {1} skipped | {2} failed" -f $copied,$skipped,$failed))+(Get-LocalizedText $extraMsg)
-        $script:manifestPath=$result.ManifestPath
+        $script:manifestPath=$null
         $ResultPanel.Visibility='Visible'
         $OpenDestinationButton.IsEnabled=$true
         $OpenManifestButton.IsEnabled=$false
         $ReviewErrorsButton.Visibility=if($failed){'Visible'}else{'Collapsed'}
         Set-Status $ResultTitle.Text $resultColor
+
+        if($script:runAllAfterDelivery -and -not $result.Cancelled -and -not $failed -and
+           $result.PSObject.Properties['RunScriptPath'] -and $result.RunScriptPath){
+             try {
+                 Invoke-RunAll -RunScriptPath $result.RunScriptPath -Profile $script:currentProfile -Dest $script:deliveryPath
+                 Set-Status (Get-LocalizedText 'Run All started.') '#16794A'
+             } catch {
+                 Set-Status (Get-LocalizedText ('Could not start Run All: '+$_.Exception.Message)) '#B42318'
+             }
+        }
       } catch {
         $script:copyTimer.Stop()
         throw "Delivery UI update failed at line $($_.InvocationInfo.ScriptLineNumber): $($_.Exception.Message)"
@@ -574,9 +835,10 @@ $LoadBranchesButton.Add_Click({
     try {
         $repo=Get-DeliveryGitRoot $RepoPath.Text
         $RepoPath.Text=$repo
-        $branches=@(Get-DeliveryGitBranches $repo)
-        $BaseBranch.ItemsSource=$branches
-        $CompareBranch.ItemsSource=$branches
+        $branches=@(Get-DeliveryGitBranches $repo | Sort-Object -Unique)
+        $script:allBranches=$branches
+        $BaseBranch.ItemsSource=$script:allBranches
+        $CompareBranch.ItemsSource=$script:allBranches
         $BaseBranch.IsEnabled=$true
         $CompareBranch.IsEnabled=$true
         $current=@(Invoke-DeliveryGit $repo @('branch','--show-current'))[0]
@@ -585,6 +847,8 @@ $LoadBranchesButton.Add_Click({
         $CompareBranch.SelectedItem=$current
         $BaseBranch.Text=$base
         $CompareBranch.Text=$current
+        Enable-BranchTypingSearch -Combo $BaseBranch
+        Enable-BranchTypingSearch -Combo $CompareBranch
         $AddGitChangesButton.IsEnabled=$true
         $GitHint.Text=Get-LocalizedText ("Loaded {0} branches. Ready to compare." -f $branches.Count)
     } catch {
@@ -672,6 +936,8 @@ $ChooseDestinationButton.Add_Click({
 $DestinationPath.Add_LostKeyboardFocus({Update-DestinationState})
 $CompareBranch.Add_SelectionChanged({Update-DestinationState})
 $CompareBranch.Add_LostKeyboardFocus({Update-DestinationState})
+Enable-BranchTypingSearch -Combo $BaseBranch
+Enable-BranchTypingSearch -Combo $CompareBranch
 $ConfigureSqlButton.Add_Click({Show-SqlDialog})
 $CreateRunScript.Add_Checked({$SqlSettingsLine.Visibility='Visible'})
 $CreateRunScript.Add_Unchecked({$SqlSettingsLine.Visibility='Collapsed'})

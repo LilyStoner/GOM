@@ -15,6 +15,7 @@ Công cụ portable trên Windows để gom file bàn giao từ file/thư mục 
 - **Chế độ sáng/tối**: đổi giao diện bằng nút **Dark mode** trên thanh đầu trang; lựa chọn được lưu tại `%LOCALAPPDATA%\GOM\theme.json` và tự áp dụng ở lần mở tiếp theo.
 - **Đa ngôn ngữ**: giao diện mặc định bằng **English**, có thể chuyển sang **Arabic**; lựa chọn được lưu tại `%LOCALAPPDATA%\GOM\language.json`. Khi chọn tiếng Ả Rập, giao diện chuyển sang bố cục phải-sang-trái (RTL).
 - **Copy an toàn**: Giữ nguyên cấu trúc thư mục, xử lý file trùng (Skip/Overwrite/Rename), đối soát SHA-256 sau khi copy.
+- **SQL và Run All**: File SQL được copy giữ nguyên encoding gốc; các script do app sinh (`install.sql`, `runscript.txt`) dùng UTF-8. Trước delivery, bạn có thể chọn Run All, kiểm tra DB user/TNS/mật khẩu và đường dẫn spool log; app chỉ chạy sau khi delivery thành công.
 - Không xuất file `delivery_manifest`.
 
 ## Cấu trúc gói bàn giao

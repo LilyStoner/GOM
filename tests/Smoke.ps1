@@ -38,6 +38,14 @@ $script:LanguageCombo.SelectedIndex = if ($savedLanguage -eq 'Arabic') { 1 } els
 $script:isUpdatingLanguage = $false
 if (Test-Path -LiteralPath $testLanguagePath) { Remove-Item -LiteralPath $testLanguagePath -Force }
 
+$script:allBranches=@('main','master','origin/master','release/master-hotfix','feature/login','feature/report')
+$script:BaseBranch.Text='report'
+Update-BranchSuggestions -Combo $script:BaseBranch
+if (@($script:BaseBranch.ItemsSource).Count -ne 4 -or @($script:BaseBranch.ItemsSource)[0] -ne 'master' -or @($script:BaseBranch.ItemsSource)[1] -ne 'origin/master' -or @($script:BaseBranch.ItemsSource)[2] -ne 'release/master-hotfix' -or @($script:BaseBranch.ItemsSource)[3] -ne 'feature/report') { throw 'Typing a branch query must retain every master-related branch and filter the remaining base-branch suggestions.' }
+$script:CompareBranch.Text=''
+Update-BranchSuggestions -Combo $script:CompareBranch
+if (@($script:CompareBranch.ItemsSource).Count -ne 6) { throw 'Clearing a branch query must restore all branch suggestions.' }
+
 $uiDeliveryRoot = Join-Path $env:TEMP ('delivery-copy-ui-smoke-'+[Guid]::NewGuid().ToString('N'))
 try {
     New-Item -ItemType Directory -Path $uiDeliveryRoot -Force | Out-Null
@@ -92,7 +100,7 @@ try {
     $output = Join-Path $temp 'delivery'
     $result = Copy-DeliveryFiles -Items @($item) -Destination $output -DuplicateMode Skip -VerifyHash $true -ReportProgress {param($done,$total,$message)} -IsCancelled {$false}
     if ($result.Items[0].Status -ne 'Copied and verified') { throw 'Copy or SHA-256 verification failed.' }
-    if ($result.ManifestPath) { throw 'The delivery manifest must not be created.' }
+    if ($result.CopiedCount -ne 1) { throw "Expected 1 file copied, got $($result.CopiedCount)." }
 }
 finally {
     if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force }

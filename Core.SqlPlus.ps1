@@ -8,7 +8,7 @@ function New-BvscDeliveryScripts {
         [string]$DbUser = 'HOSTBVSFUND',
         [string]$DbPass = 'HOST',
         [string]$TnsName = 'FLEX_236',
-        [string]$LogFile = '../log/install.log'
+        [string]$LogFile = 'D:/log.txt'
     )
     $upgradeDir = Join-Path $Destination '2.HOST\upgrade'
     $cmdDir = Join-Path $upgradeDir 'cmd'
@@ -90,7 +90,7 @@ set FLEX_TNSNAMES=$TnsName
         'exit'
     )
     $installPath = Join-Path $sqlDir 'install.sql'
-    $installContent | Set-Content -LiteralPath $installPath -Encoding UTF8
+    [IO.File]::WriteAllLines($installPath, [string[]]$installContent, (New-Object System.Text.UTF8Encoding $false))
 
     # 4. runscript.txt - named after source root folder
     $runscriptName = if ($SourceRoot) { [IO.Path]::GetFileName($SourceRoot.TrimEnd('\/', ' ')) } else { 'runscript' }
@@ -102,14 +102,14 @@ set FLEX_TNSNAMES=$TnsName
         'SET FEEDBACK OFF',
         'SET VERIFY OFF',
         'SET TERMOUT OFF',
-        'SPOOL D:/log.txt;',
+        "SPOOL $LogFile;",
         "conn $DbUser/$DbPass@$TnsName;"
     ) + $runscriptCalls + @(
         'COMMIT;',
         'SPOOL OFF;'
     )
     $runscriptPath = Join-Path $upgradeDir "$runscriptName.txt"
-    $runscriptContent | Set-Content -LiteralPath $runscriptPath -Encoding UTF8
+    [IO.File]::WriteAllLines($runscriptPath, [string[]]$runscriptContent, (New-Object System.Text.UTF8Encoding $false))
 
     return [pscustomobject]@{
         InstallSql = $installPath
@@ -127,7 +127,7 @@ function New-StandardDeliveryScripts {
         [string]$DbUser = 'HOSTBSCFUND',
         [string]$DbPass = 'HOST',
         [string]$TnsName = 'FLEX189',
-        [string]$LogFile = '../log/install.log'
+        [string]$LogFile = 'D:/log.txt'
     )
     $copiedSql = @($Items | Where-Object {
         $_.ActualDestination -and $_.Status -match '^Copied' -and [IO.Path]::GetExtension($_.ActualDestination).Equals('.sql', [StringComparison]::OrdinalIgnoreCase)
@@ -153,7 +153,7 @@ function New-StandardDeliveryScripts {
         'SET FEEDBACK OFF',
         'SET VERIFY OFF',
         'SET TERMOUT OFF',
-        'SPOOL D:/log.txt;',
+        "SPOOL $LogFile;",
         "conn $DbUser/$DbPass@$TnsName;"
     ) + $sqlCalls + @(
         'COMMIT;',
@@ -161,7 +161,7 @@ function New-StandardDeliveryScripts {
     )
 
     $runscriptPath = Join-Path $Destination 'runscript.txt'
-    $runscriptContent | Set-Content -LiteralPath $runscriptPath -Encoding UTF8
+    [IO.File]::WriteAllLines($runscriptPath, [string[]]$runscriptContent, (New-Object System.Text.UTF8Encoding $false))
 
     return $runscriptPath
 }
@@ -173,7 +173,7 @@ function New-DeliveryRunScript {
         [Parameter(Mandatory)][string]$DbUser,
         [Parameter(Mandatory)][string]$TnsName,
         [string]$DbPass = 'HOST',
-        [string]$LogFile = '../log/install.log',
+        [string]$LogFile = 'D:/log.txt',
         [string]$Profile = 'BVSC'
     )
     if ([string]::IsNullOrWhiteSpace($DbUser) -or [string]::IsNullOrWhiteSpace($TnsName)) {
