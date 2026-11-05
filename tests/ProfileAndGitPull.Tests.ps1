@@ -23,11 +23,11 @@ try {
     New-Item -ItemType Directory -Path $sourceDir | Out-Null
 
     # Create dummy BVSC source structure
-    $bvscHostView = Join-Path $sourceDir '2.HOST\1.View\V_TEST.sql'
-    $bvscHostChange = Join-Path $sourceDir '2.HOST\0.ChangeScripts\01.CREATE_TABLE.sql'
-    $bvscReport = Join-Path $sourceDir '5.Reports\SE2305.rpt'
-    $bdsParam = Join-Path $sourceDir '1.BDSHOST\Parameters\ALLCODE\BDS_ALLCODE.sql'
-    $serviceDll = Join-Path $sourceDir '3.Service\Host.dll'
+    $bvscHostView = [IO.Path]::GetFullPath((Join-Path $sourceDir '2.HOST\1.View\V_TEST.sql'))
+    $bvscHostChange = [IO.Path]::GetFullPath((Join-Path $sourceDir '2.HOST\0.ChangeScripts\01.CREATE_TABLE.sql'))
+    $bvscReport = [IO.Path]::GetFullPath((Join-Path $sourceDir '5.Reports\SE2305.rpt'))
+    $bdsParam = [IO.Path]::GetFullPath((Join-Path $sourceDir '1.BDSHOST\Parameters\ALLCODE\BDS_ALLCODE.sql'))
+    $serviceDll = [IO.Path]::GetFullPath((Join-Path $sourceDir '3.Service\Host.dll'))
 
     New-Item -ItemType Directory -Path (Split-Path $bvscHostView) -Force | Out-Null
     New-Item -ItemType Directory -Path (Split-Path $bvscHostChange) -Force | Out-Null
@@ -75,7 +75,10 @@ try {
     $item3 = New-DeliveryItem -File (Get-Item $bvscReport) -Source $sourceDir -Profile 'BVSC'
 
     $copyRes = Copy-DeliveryFiles -Items @($item1, $item2, $item3) -Destination $bvscDest -DuplicateMode Overwrite -VerifyHash $true -ReportProgress {param($d,$t,$m)} -IsCancelled {$false}
-    $scriptRes = New-DeliveryRunScript -Items $copyRes.Items -Destination $bvscDest -DbUser 'HOSTBVSFUND' -DbPass 'HOST' -TnsName 'FLEX_236' -Profile 'BVSC'
+    $scriptRes = New-DeliveryRunScript -Items $copyRes.Items -Destination $bvscDest -DbUser 'HOSTBVSFUND' -DbPass 'HOST' -TnsName 'FLEX_236' -LogFile 'D:/bvsc-delivery.log' -Profile 'BVSC'
+    if ($scriptRes -ne (Join-Path $bvscDest '2.HOST\upgrade\sql\install.sql')) {
+        throw 'BVSC Run All must use the generated install.sql'
+    }
 
     if ($copyRes.ManifestPath) {
         throw 'delivery_manifest must not be created for BVSC delivery'
@@ -114,8 +117,13 @@ try {
     if (-not $bvscRunscript.Contains('@' + $bvscHostView)) {
         throw 'BVSC runscript.txt must use the absolute local-repository path for V_TEST.sql'
     }
-    if (-not $bvscRunscript.Contains('SPOOL D:/log.txt;')) {
-        throw 'BVSC runscript.txt must spool to D:/log.txt'
+    if (-not $bvscRunscript.Contains('SPOOL D:/bvsc-delivery.log;')) {
+        throw 'BVSC runscript.txt must use the configured spool log path'
+    }
+    foreach($generatedSql in @((Join-Path $bvscDest '2.HOST\upgrade\sql\install.sql'))){
+        $bytes=[IO.File]::ReadAllBytes($generatedSql)
+        if($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF){throw "Generated SQL must be UTF-8 without BOM: $generatedSql"}
+        try{[void](New-Object System.Text.UTF8Encoding($false,$true)).GetString($bytes)}catch{throw "Generated SQL is not valid UTF-8: $generatedSql"}
     }
 
     # Test 4: BSC Delivery Scripts Generation
@@ -125,7 +133,7 @@ try {
     $stdItem3 = New-DeliveryItem -File (Get-Item $serviceDll) -Source $sourceDir -Profile 'BSC'
 
     $stdCopyRes = Copy-DeliveryFiles -Items @($stdItem1, $stdItem2, $stdItem3) -Destination $stdDest -DuplicateMode Overwrite -VerifyHash $true -WriteManifest $false -ReportProgress {param($d,$t,$m)} -IsCancelled {$false}
-    $stdScriptRes = New-DeliveryRunScript -Items $stdCopyRes.Items -Destination $stdDest -DbUser 'HOSTBSCFUND' -DbPass 'HOST' -TnsName 'FLEX189' -Profile 'BSC'
+    $stdScriptRes = New-DeliveryRunScript -Items $stdCopyRes.Items -Destination $stdDest -DbUser 'HOSTBSCFUND' -DbPass 'HOST' -TnsName 'FLEX189' -LogFile 'D:/bsc-delivery.log' -Profile 'BSC'
 
     if (-not (Test-Path -LiteralPath (Join-Path $stdDest 'runscript.txt'))) {
         throw 'runscript.txt missing in BSC package'
@@ -134,9 +142,12 @@ try {
     if (-not $stdRunscript.Contains('@' + $bdsParam)) {
         throw 'runscript.txt must use the absolute local-repository path for BDS_ALLCODE.sql'
     }
-    if (-not $stdRunscript.Contains('SPOOL D:/log.txt;')) {
-        throw 'BSC runscript.txt must spool to D:/log.txt'
+    if (-not $stdRunscript.Contains('SPOOL D:/bsc-delivery.log;')) {
+        throw 'BSC runscript.txt must use the configured spool log path'
     }
+    $stdRunscriptBytes=[IO.File]::ReadAllBytes((Join-Path $stdDest 'runscript.txt'))
+    if($stdRunscriptBytes.Length -ge 3 -and $stdRunscriptBytes[0] -eq 0xEF -and $stdRunscriptBytes[1] -eq 0xBB -and $stdRunscriptBytes[2] -eq 0xBF){throw 'runscript.txt must be UTF-8 without BOM'}
+    try{[void](New-Object System.Text.UTF8Encoding($false,$true)).GetString($stdRunscriptBytes)}catch{throw 'runscript.txt is not valid UTF-8'}
     if (Test-Path -LiteralPath (Join-Path $stdDest 'runscript.sql')) {
         throw 'runscript.sql must not be created for BSC delivery'
     }
