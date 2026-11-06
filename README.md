@@ -1,4 +1,4 @@
-# Delivery Copy (GOM)
+﻿# Delivery Copy (GOM)
 
 Công cụ portable trên Windows để gom file bàn giao từ file/thư mục hoặc so sánh hai nhánh Git. Không cần cài đặt, EXE, .NET SDK hay build source.
 
@@ -12,10 +12,11 @@ Công cụ portable trên Windows để gom file bàn giao từ file/thư mục 
 - **Sắp xếp SQL thông minh (FlexDB Order)**:
   - Một chạm tự động sắp xếp toàn bộ script SQL theo thứ tự phụ thuộc chuẩn của FlexDB: `ChangeScripts` → `Views` → `Triggers` → `Procedures` → `Functions` → `Packages` → `Parameters` (ALLCODE, APPRVRQD, DEFERROR, SYSVAR, ...).
 - **Rà soát danh sách trực quan**: include/exclude, tìm kiếm, lọc theo loại, tính tổng dung lượng và số lượng file SQL.
+- **Xem diff hai nhánh**: bấm đúp file Git trong Review hoặc chọn dòng rồi bấm `View Git diff...`. TortoiseGitMerge hiển thị hai bản tại đúng commit Base/Compare đã lấy, ở chế độ chỉ đọc. Cần cài TortoiseGit trên máy để dùng tính năng này; file thêm mới có phía Base trống, file đổi tên được so theo tên cũ và mới.
 - **Chế độ sáng/tối**: đổi giao diện bằng nút **Dark mode** trên thanh đầu trang; lựa chọn được lưu tại `%LOCALAPPDATA%\GOM\theme.json` và tự áp dụng ở lần mở tiếp theo.
 - **Đa ngôn ngữ**: giao diện mặc định bằng **English**, có thể chuyển sang **Arabic**; lựa chọn được lưu tại `%LOCALAPPDATA%\GOM\language.json`. Khi chọn tiếng Ả Rập, giao diện chuyển sang bố cục phải-sang-trái (RTL).
 - **Copy an toàn**: Giữ nguyên cấu trúc thư mục, xử lý file trùng (Skip/Overwrite/Rename), đối soát SHA-256 sau khi copy.
-- **SQL và Run All**: File SQL được copy giữ nguyên encoding gốc; các script do app sinh (`install.sql`, `runscript.txt`) dùng UTF-8. Trước delivery, bạn có thể chọn Run All, kiểm tra DB user/TNS/mật khẩu và đường dẫn spool log; app chỉ chạy sau khi delivery thành công.
+- **SQL và Run All**: File SQL được copy giữ nguyên encoding gốc; các script do app sinh (`install.sql`, `runscript.txt`) dùng UTF-8. Trước delivery, bạn có thể chọn Run All và kiểm tra DB user/TNS/mật khẩu cùng đường dẫn spool log. Sau khi delivery thành công, SQL*Plus chạy ẩn; app hiển thị tiến trình, kết quả và nút xem log. Nếu log không được cập nhật, trạng thái yêu cầu kiểm tra thay vì báo thành công.
 - Không xuất file `delivery_manifest`.
 
 ## Cấu trúc gói bàn giao
@@ -66,12 +67,13 @@ Công cụ portable trên Windows để gom file bàn giao từ file/thư mục 
 2. Double-click `DeliveryCopy.cmd` (hoặc chạy `powershell -File App.ps1`).
 3. Khi app mở, chọn kiểu gom dự án (**BVSC** hoặc **Other**). Bạn cũng có thể đổi Profile bất kỳ lúc nào ở thanh menu trên cùng.
 4. Chọn nguồn:
-   - **File và thư mục**: Bấm `Select files` hoặc `Select folder`.
-   - **Git comparison**: Chọn thư mục repo, bấm `Load branches`, chọn Base và Compare branch. App sẽ tự động checkout và pull code mới nhất về local khi bấm `Add Git changes`.
-5. Khi có Compare branch, app tạo gói bàn giao trong thư mục con mang tên branch đó. Các ký tự không dùng được trong tên thư mục Windows, như `/`, được thay bằng `-`.
-5. Kiểm tra danh sách ở bước **2 Review**:
-   - Bấm `Sort SQL (FlexDB Order)` để sắp xếp thứ tự thực thi SQL chuẩn.
-6. Chọn thư mục đích và bấm **Start delivery** ở bước **3 Deliver**.
+   - **Danh sách đường dẫn**: Mở `More options` → `Paste file paths`, nhập các đường dẫn cần gom.
+   - **Git comparison**: Chọn repo và hai nhánh. Khi bấm `Add Git changes`, app cập nhật cả hai nhánh bằng `pull --ff-only`, tạo snapshot của nhánh Compare rồi khôi phục nhánh ban đầu. Thay đổi tracked hoặc conflict sẽ chặn thao tác.
+5. Chọn chế độ đích: mặc định **Create or reuse branch folder / FLEX** tạo hoặc dùng lại `<thư mục chọn>\<tên nhánh>\FLEX`; **Use selected existing delivery folder** gom trực tiếp vào thư mục đã chọn, ví dụ thư mục FLEX trong SVN.
+6. Kiểm tra danh sách ở bước **2 Review**. Bấm `Sort by execution order` để sắp xếp theo nhóm SQL.
+7. Tại **3 Deliver**, kiểm tra đường dẫn và số file trùng rồi bấm **Start delivery**. Mặc định là **Overwrite**; app yêu cầu xác nhận trước khi ghi đè.
+
+Biểu tượng giao diện mở lựa chọn **System / Light / Dark**. Dùng `Ctrl+F` để tìm trong Review và `Ctrl+1/2/3` để chuyển bước khi bước đó khả dụng.
 
 ## Open source
 
@@ -84,3 +86,5 @@ Công cụ portable trên Windows để gom file bàn giao từ file/thư mục 
 | `Core.Git.ps1` | Git fetch, auto checkout & pull branch, diff và trích xuất file |
 | `Core.FileOps.ps1` | Ánh xạ đường dẫn theo Profile (BVSC / Other), scan file, copy và hash |
 | `Core.SqlPlus.ps1` | Sinh bộ script thực thi cho BVSC (runUpdate.bat, setVariable.bat, install.sql) và Other (runscript.txt với đường dẫn repo local tuyệt đối) |
+| `Core.Runner.ps1` | Chạy SQL*Plus ẩn và kiểm tra kết quả, log |
+| `Core.WindowSettings.ps1` | Lưu và khôi phục kích thước cửa sổ theo vùng hiển thị |

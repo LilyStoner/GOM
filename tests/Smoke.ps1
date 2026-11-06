@@ -2,7 +2,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $root = Split-Path -Parent $PSScriptRoot
-$files = @('App.ps1','Localization.ps1','Core.FileOps.ps1','Core.Git.ps1','Core.SqlPlus.ps1','DeliveryCopy.ps1')
+$files = @('App.ps1','Localization.ps1','Core.FileOps.ps1','Core.Git.ps1','Core.SqlPlus.ps1','Core.Runner.ps1','Core.WindowSettings.ps1','DeliveryCopy.ps1')
 foreach ($file in $files) {
     $tokens = $null
     $errors = $null
@@ -21,14 +21,14 @@ $script:LanguageCombo.SelectedIndex = 0
 $script:LanguageCombo.SelectedIndex = 1
 if ($script:window.Title -ne $script:englishToArabic['Delivery Copy']) { throw 'Arabic window title was not applied.' }
 if ($script:window.FlowDirection -ne [Windows.FlowDirection]::RightToLeft) { throw 'Arabic layout must use right-to-left flow direction.' }
-if ($script:Step1Button.Content -ne $script:englishToArabic['1  Select files']) { throw 'Arabic control text was not applied.' }
-if ($script:FileGrid.Columns[1].Header -ne $script:englishToArabic['PACKAGE PATH']) { throw 'Arabic table headers were not applied.' }
+if ([Windows.Automation.AutomationProperties]::GetName($script:Step1Button) -ne $script:englishToArabic['1  Select files']) { throw 'Arabic control text was not applied.' }
+if ($script:FileGrid.Columns[1].Header -ne $script:englishToArabic['Package path']) { throw 'Arabic table headers were not applied.' }
 $expectedArabicPath = $script:englishToArabic['Delivery folder: {0}'].Replace('{0}', 'C:\temp')
 if ((Get-LocalizedText 'Delivery folder: C:\temp') -ne $expectedArabicPath) { throw 'Arabic parameterized translation failed.' }
 $script:LanguageCombo.SelectedIndex = 0
 if ($script:window.Title -ne 'Delivery Copy') { throw 'English window title was not restored.' }
 if ($script:window.FlowDirection -ne [Windows.FlowDirection]::LeftToRight) { throw 'English layout must use left-to-right flow direction.' }
-if ($script:Step1Button.Content -ne '1  Select files') { throw 'English control text was not restored.' }
+if ([Windows.Automation.AutomationProperties]::GetName($script:Step1Button) -ne '1  Select files') { throw 'English control text was not restored.' }
 if ((Get-LocalizedText $expectedArabicPath) -ne 'Delivery folder: C:\temp') { throw 'English parameterized translation was not restored.' }
 $script:language = $savedLanguage
 $script:languageSettingsPath = $savedLanguagePath
@@ -52,8 +52,12 @@ try {
     $uiSource = Join-Path $uiDeliveryRoot 'ui-delivery.txt'
     Set-Content -LiteralPath $uiSource -Value 'UI delivery test'
     [void](Add-Items -Files @(Get-Item -LiteralPath $uiSource) -SourceRoot $uiDeliveryRoot)
-    $script:DestinationPath.Text = Join-Path $uiDeliveryRoot 'output'
+    $script:ExistingDestination.IsChecked = $true
+    $uiOutput = Join-Path $uiDeliveryRoot 'output'
+    New-Item -ItemType Directory -Path $uiOutput | Out-Null
+    $script:DestinationPath.Text = $uiOutput
     Update-DestinationState
+    Set-Step 3
 
     $script:copyResultTimer = New-Object Windows.Threading.DispatcherTimer
     $script:copyResultTimer.Interval = [TimeSpan]::FromMilliseconds(100)
@@ -66,9 +70,14 @@ try {
     $script:copyResultTimer.Start()
     Start-Delivery
     [void]$script:window.ShowDialog()
-    if ($script:ResultTitle.Text -ne (Get-LocalizedText 'Delivery completed')) {
+    if ($script:ResultTitle.Text -notlike 'Delivered 1 file to *') {
         throw "UI delivery did not complete successfully: $($script:ResultTitle.Text)"
     }
+    if ($script:items[0].Status -ne 'Ready' -or $script:items[0].DeliveryResult -ne 'Verified') { throw 'Delivery must preserve the change status and show the verification result separately.' }
+    $resultColumn=@($script:FileGrid.Columns | Where-Object {$_.SortMemberPath -eq 'DeliveryResult'})
+    if ($resultColumn.Count -ne 1 -or $resultColumn[0].Visibility -ne 'Visible') { throw 'The delivery result column must be visible after delivery.' }
+    if ($script:StartDeliveryButton.Content -ne 'Deliver again' -or $script:OpenDestinationButton.Style -ne $script:window.Resources['Primary']) { throw 'Completed delivery actions were not updated.' }
+    if ($script:StartDeliveryButton.IsDefault -or -not $script:OpenDestinationButton.IsDefault) { throw 'Enter must open the completed delivery rather than run it again.' }
 }
 finally {
     if ($script:copyResultTimer) { $script:copyResultTimer.Stop() }

@@ -101,6 +101,10 @@ function New-DeliveryItem {
         Size = [long]$File.Length
         SizeDisplay = Format-DeliverySize $File.Length
         Status = $status
+        StatusLabel = $status
+        DeliveryResult = ''
+        DeliveryResultLabel = ''
+        DeliveryDetail = ''
         StatusBrush = '#64748B'
     }
 }
@@ -144,6 +148,15 @@ function ConvertTo-DeliveryBranchFolderName {
     $folderName = $folderName.Trim().TrimEnd('.')
     if ([string]::IsNullOrWhiteSpace($folderName)) { return 'delivery' }
     return $folderName
+}
+
+function Get-DeliveryDestination {
+    param([string]$Root, [string]$BranchName, [bool]$UseBranchFolder = $true)
+    if ([string]::IsNullOrWhiteSpace($Root)) { throw 'Choose a destination folder.' }
+    if (-not $UseBranchFolder) { return $Root.Trim() }
+    $branchFolder = ConvertTo-DeliveryBranchFolderName $BranchName
+    if (-not $branchFolder) { throw 'Choose a compare branch or select an existing delivery folder.' }
+    return (Join-Path (Join-Path $Root.Trim() $branchFolder) 'FLEX')
 }
 
 function Copy-DeliveryFiles {

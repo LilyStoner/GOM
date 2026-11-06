@@ -65,13 +65,18 @@ set FLEX_TNSNAMES=$TnsName
         # install.sql uses relative path (@@) from the sql/ dir
         if ($act -match '2\.HOST\\upgrade\\sql\\(?<subSql>.*)$') {
             $sub = $Matches['subSql'].Replace('\', '/')
-            [void]$sqlCalls.Add("@@$sub")
+            [void]$sqlCalls.Add($(if($sub -match '\s'){'@@"'+$sub+'"'}else{'@@'+$sub}))
         } else {
-            [void]$sqlCalls.Add('@@' + $act.Replace('\', '/'))
+            $sub=$act.Replace('\', '/')
+            [void]$sqlCalls.Add($(if($sub -match '\s'){'@@"'+$sub+'"'}else{'@@'+$sub}))
         }
         # runscript.txt runs scripts directly from the local repository.
-        if ($item.PSObject.Properties['Source'] -and $item.Source) {
-            [void]$runscriptCalls.Add('@' + [IO.Path]::GetFullPath($item.Source))
+        if ($item.PSObject.Properties['ScriptSource'] -and $item.ScriptSource) {
+            $path = [IO.Path]::GetFullPath($item.ScriptSource)
+            [void]$runscriptCalls.Add($(if($path -match '\s'){'@"'+$path+'"'}else{'@'+$path}))
+        } elseif ($item.PSObject.Properties['Source'] -and $item.Source) {
+            $path = [IO.Path]::GetFullPath($item.Source)
+            [void]$runscriptCalls.Add($(if($path -match '\s'){'@"'+$path+'"'}else{'@'+$path}))
         } else {
             # Fallback for callers that only provide the copied destination.
             [void]$runscriptCalls.Add('@' + (Join-Path $Destination $act))
@@ -137,12 +142,14 @@ function New-StandardDeliveryScripts {
 
     $sqlCalls = @($copiedSql | ForEach-Object {
         # BSC runs directly from the local repository, so retain the source's absolute path.
-        $scriptPath = if ($_.PSObject.Properties['Source'] -and $_.Source) {
+        $scriptPath = if ($_.PSObject.Properties['ScriptSource'] -and $_.ScriptSource) {
+            [IO.Path]::GetFullPath($_.ScriptSource)
+        } elseif ($_.PSObject.Properties['Source'] -and $_.Source) {
             [IO.Path]::GetFullPath($_.Source)
         } else {
             Join-Path $Destination $_.ActualDestination
         }
-        '@' + $scriptPath
+        if($scriptPath -match '\s'){'@"'+$scriptPath+'"'}else{'@'+$scriptPath}
     })
 
     $runscriptContent = @(

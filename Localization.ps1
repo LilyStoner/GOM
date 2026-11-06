@@ -1,4 +1,4 @@
-$script:localizationFile = Join-Path $script:appRoot 'Localization.json'
+﻿$script:localizationFile = Join-Path $script:appRoot 'Localization.json'
 if (-not (Test-Path -LiteralPath $script:localizationFile -PathType Leaf)) {
     throw "Localization data was not found at '$script:localizationFile'."
 }
@@ -11,6 +11,12 @@ try {
 
 $script:englishToArabic = @{}
 $script:arabicToEnglish = @{}
+$script:englishToVietnamese = @{}
+$script:vietnameseToEnglish = @{}
+foreach ($entry in $script:localizationData.vi.PSObject.Properties) {
+    $script:englishToVietnamese[$entry.Name] = [string]$entry.Value
+    $script:vietnameseToEnglish[[string]$entry.Value] = $entry.Name
+}
 foreach ($entry in $script:localizationData.ar.PSObject.Properties) {
     $script:englishToArabic[$entry.Name] = [string]$entry.Value
     $script:arabicToEnglish[[string]$entry.Value] = $entry.Name
@@ -23,51 +29,41 @@ function Get-SavedLanguage {
     } catch {
         throw "Could not read language settings at '$script:languageSettingsPath': $($_.Exception.Message)"
     }
-    if ($settings.Language -notin @('English', 'Arabic')) {
-        throw "Language settings at '$script:languageSettingsPath' must contain Language set to 'English' or 'Arabic'."
+    if ($settings.Language -notin @('English', 'Arabic', 'Vietnamese')) {
+        throw "Language settings at '$script:languageSettingsPath' must contain Language set to 'English', 'Arabic' or 'Vietnamese'."
     }
     return [string]$settings.Language
 }
 
-function Get-LocalizedText([string]$Text) {
-    if ($script:language -eq 'Arabic') {
-        if ($script:englishToArabic.ContainsKey($Text)) { return $script:englishToArabic[$Text] }
-        if ($script:arabicToEnglish.ContainsKey($Text)) { return $Text }
-
-        foreach ($entry in $script:englishToArabic.GetEnumerator()) {
-            if ($entry.Key -notmatch '\{\d+\}') { continue }
-            $pattern = [regex]::Replace([regex]::Escape($entry.Key), '\\\{\d+\}', '([\s\S]+?)')
-            $match = [regex]::Match($Text, '^' + $pattern + '$')
-            if (-not $match.Success) { continue }
-            $translated = [string]$entry.Value
-            for ($index = 1; $index -lt $match.Groups.Count; $index++) {
-                $translated = $translated.Replace('{' + ($index - 1) + '}', $match.Groups[$index].Value)
-            }
-            return $translated
-        }
-        return $Text
-    }
-
-    if ($script:arabicToEnglish.ContainsKey($Text)) { return $script:arabicToEnglish[$Text] }
-    foreach ($entry in $script:englishToArabic.GetEnumerator()) {
+$script:localizedPatternCache=@{}
+function Convert-LocalizedValue([string]$Text,[hashtable]$Map) {
+    if ($Map.ContainsKey($Text)) { return [string]$Map[$Text] }
+    $key=[Runtime.CompilerServices.RuntimeHelpers]::GetHashCode($Map)
+    if(-not $script:localizedPatternCache.ContainsKey($key)){$script:localizedPatternCache[$key]=@($Map.GetEnumerator() | Where-Object {$_.Key -match '\{\d+\}'} | Sort-Object { ([regex]::Replace([string]$_.Key, '\{\d+\}', '')).Length } -Descending)}
+    foreach ($entry in $script:localizedPatternCache[$key]) {
         if ($entry.Key -notmatch '\{\d+\}') { continue }
-        $pattern = [regex]::Replace([regex]::Escape([string]$entry.Value), '\\\{\d+\}', '([\s\S]+?)')
+        $pattern = [regex]::Replace([regex]::Escape([string]$entry.Key), '\\\{\d+\}', '([\s\S]+?)')
         $match = [regex]::Match($Text, '^' + $pattern + '$')
         if (-not $match.Success) { continue }
-        $translated = [string]$entry.Key
-        for ($index = 1; $index -lt $match.Groups.Count; $index++) {
-            $translated = $translated.Replace('{' + ($index - 1) + '}', $match.Groups[$index].Value)
-        }
+        $translated=[string]$entry.Value
+        for ($index=1;$index -lt $match.Groups.Count;$index++) { $translated=$translated.Replace('{'+($index-1)+'}',$match.Groups[$index].Value) }
         return $translated
     }
     return $Text
+}
+function Get-LocalizedText([string]$Text) {
+    $english=Convert-LocalizedValue $Text $script:arabicToEnglish
+    $english=Convert-LocalizedValue $english $script:vietnameseToEnglish
+    if($script:language -eq 'Arabic'){return (Convert-LocalizedValue $english $script:englishToArabic)}
+    if($script:language -eq 'Vietnamese'){return (Convert-LocalizedValue $english $script:englishToVietnamese)}
+    return $english
 }
 
 function Set-WindowLanguage([Windows.Window]$TargetWindow) {
     $isArabic = $script:language -eq 'Arabic'
     $TargetWindow.Title = Get-LocalizedText $TargetWindow.Title
     $TargetWindow.FlowDirection = if ($isArabic) { 'RightToLeft' } else { 'LeftToRight' }
-    $TargetWindow.Language = [System.Windows.Markup.XmlLanguage]::GetLanguage($(if ($isArabic) { 'ar-SA' } else { 'en-US' }))
+    $TargetWindow.Language = [System.Windows.Markup.XmlLanguage]::GetLanguage($(if ($isArabic) { 'ar-SA' } elseif ($script:language -eq 'Vietnamese') { 'vi-VN' } else { 'en-US' }))
 
     $pending = New-Object 'System.Collections.Generic.Queue[object]'
     $visited = New-Object 'System.Collections.Generic.HashSet[object]'
